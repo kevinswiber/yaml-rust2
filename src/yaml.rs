@@ -138,7 +138,7 @@ impl YamlLoader {
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
-            Event::MappingStart(aid, _) => {
+            Event::MappingStart(aid, _, _) => {
                 self.doc_stack.push((Yaml::Hash(Hash::new()), aid));
                 self.key_stack.push(Yaml::BadValue);
             }

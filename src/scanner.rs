@@ -41,6 +41,15 @@ pub enum TScalarStyle {
     Folded,
 }
 
+/// Style of a YAML mapping
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TMappingStyle {
+    /// A flow-style mapping (using curly braces {})
+    Flow,
+    /// A block-style mapping (using indentation)
+    Block,
+}
+
 /// A location in a yaml document.
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 pub struct Marker {
@@ -1868,7 +1877,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         let tok = self.scan_flow_scalar(single)?;
 
         // From spec: To ensure JSON compatibility, if a key inside a flow mapping is JSON-like,
-        // YAML allows the following value to be specified adjacent to the “:”.
+        // YAML allows the following value to be specified adjacent to the ":"
         self.skip_to_next_token()?;
         self.adjacent_value_allowed_at = self.mark.index;
 
