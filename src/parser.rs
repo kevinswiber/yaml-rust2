@@ -143,6 +143,7 @@ pub struct Parser<T> {
 
     anchors: HashMap<String, usize>,
     anchor_id: usize,
+    anchor_names: HashMap<usize, String>,
     tags: HashMap<String, String>,
     keep_tags: bool,
 }
@@ -226,6 +227,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             anchors: HashMap::new(),
             // valid anchor_id starts from 1
             anchor_id: 1,
+            anchor_names: HashMap::new(),
             tags: HashMap::new(),
             keep_tags: false,
         }
@@ -649,14 +651,12 @@ impl<T: Iterator<Item = char>> Parser<T> {
         Ok((Event::DocumentEnd, marker))
     }
 
-    fn register_anchor(&mut self, name: String, _: &Marker) -> usize {
-        // anchors can be overridden/reused
-        // if self.anchors.contains_key(name) {
-        //     return Err(ScanError::new(*mark,
-        //         "while parsing anchor, found duplicated anchor"));
-        // }
+    fn process_anchor(&mut self, name: String) -> usize {
+        // Always create a new ID for this anchor
         let new_id = self.anchor_id;
         self.anchor_id += 1;
+        self.anchor_names.insert(new_id, name.clone());
+        // Update the name->id mapping to point to the new ID
         self.anchors.insert(name, new_id);
         new_id
     }
@@ -682,7 +682,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Token(_, TokenType::Anchor(_)) => {
                 if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
-                    anchor_id = self.register_anchor(name, &mark);
+                    anchor_id = self.process_anchor(name);
                     if let TokenType::Tag(..) = self.peek_token()?.1 {
                         if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
                             tag = Some(self.resolve_tag(mark, &handle, suffix)?);
@@ -699,7 +699,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let TokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
-                            anchor_id = self.register_anchor(name, &mark);
+                            anchor_id = self.process_anchor(name);
                         } else {
                             unreachable!()
                         }
@@ -729,9 +729,8 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Token(mark, TokenType::FlowMappingStart(position_id)) => {
                 self.state = State::FlowMappingFirstKey;
-                let anchor_id = self.register_anchor(String::new(), &mark);
                 Ok((
-                    Event::MappingStart(anchor_id, None, TMappingStyle::Flow, position_id),
+                    Event::MappingStart(anchor_id, tag, TMappingStyle::Flow, position_id),
                     mark,
                 ))
             }
@@ -1106,6 +1105,11 @@ impl<T: Iterator<Item = char>> Parser<T> {
     /// by accessing the exact position of opening braces.
     pub fn flow_mapping_positions(&self) -> Option<&HashMap<usize, Marker>> {
         self.scanner.flow_mapping_positions()
+    }
+
+    /// Get the anchor names map
+    pub fn get_anchor_names(&self) -> &HashMap<usize, String> {
+        &self.anchor_names
     }
 }
 

@@ -1,7 +1,8 @@
 //! YAML serialization helpers.
 
 use crate::char_traits;
-use crate::yaml::{Hash, Yaml};
+use crate::yaml::{Hash, Yaml, YamlLoader};
+use std::collections::HashSet;
 use std::convert::From;
 use std::error::Error;
 use std::fmt::{self, Display};
@@ -54,6 +55,10 @@ pub struct YamlEmitter<'a> {
     compact: bool,
     level: isize,
     multiline_strings: bool,
+    // Track emitted anchors to avoid duplicates
+    emitted_anchors: HashSet<usize>,
+    // Reference to the YamlLoader for anchor names
+    loader: Option<&'a YamlLoader>,
 }
 
 /// A convenience alias for emitter functions that may fail without returning a value.
@@ -131,6 +136,8 @@ impl<'a> YamlEmitter<'a> {
             compact: true,
             level: -1,
             multiline_strings: false,
+            emitted_anchors: HashSet::new(),
+            loader: None,
         }
     }
 
@@ -186,6 +193,12 @@ impl<'a> YamlEmitter<'a> {
         self.multiline_strings
     }
 
+    /// Set the YamlLoader to use for anchor names
+    pub fn set_loader(&mut self, loader: &'a YamlLoader) -> &mut Self {
+        self.loader = Some(loader);
+        self
+    }
+
     /// Dump Yaml to an output stream.
     /// # Errors
     /// Returns `EmitError` when an error occurs.
@@ -196,57 +209,78 @@ impl<'a> YamlEmitter<'a> {
         self.emit_node(doc)
     }
 
-    fn write_indent(&mut self) -> EmitResult {
-        if self.level <= 0 {
-            return Ok(());
-        }
-        for _ in 0..self.level {
-            for _ in 0..self.best_indent {
-                write!(self.writer, " ")?;
-            }
-        }
-        Ok(())
-    }
-
     fn emit_node(&mut self, node: &Yaml) -> EmitResult {
         match *node {
-            Yaml::Array(ref v) => self.emit_array(v),
-            Yaml::Hash(ref h) => self.emit_hash(h),
+            Yaml::Array(ref v) => {
+                if let Some(loader) = self.loader {
+                    if let Some(anchor_id) = loader.get_anchor_id(node) {
+                        if !self.emitted_anchors.contains(&anchor_id) {
+                            self.emitted_anchors.insert(anchor_id);
+                            if let Some(anchor_name) = loader.get_anchor_name(anchor_id) {
+                                write!(self.writer, "&{} ", anchor_name)?;
+                            }
+                            self.emit_array(v)
+                        } else {
+                            if let Some(anchor_name) = loader.get_anchor_name(anchor_id) {
+                                write!(self.writer, "*{}", anchor_name)?;
+                            }
+                            Ok(())
+                        }
+                    } else {
+                        self.emit_array(v)
+                    }
+                } else {
+                    self.emit_array(v)
+                }
+            }
+            Yaml::Hash(ref h) => {
+                if let Some(loader) = self.loader {
+                    if let Some(anchor_id) = loader.get_anchor_id(node) {
+                        if !self.emitted_anchors.contains(&anchor_id) {
+                            self.emitted_anchors.insert(anchor_id);
+                            if let Some(anchor_name) = loader.get_anchor_name(anchor_id) {
+                                write!(self.writer, "&{} ", anchor_name)?;
+                            }
+                            self.emit_hash(h)
+                        } else {
+                            if let Some(anchor_name) = loader.get_anchor_name(anchor_id) {
+                                write!(self.writer, "*{}", anchor_name)?;
+                            }
+                            Ok(())
+                        }
+                    } else {
+                        self.emit_hash(h)
+                    }
+                } else {
+                    self.emit_hash(h)
+                }
+            }
             Yaml::String(ref v) => {
                 if self.multiline_strings
                     && v.contains('\n')
-                    && char_traits::is_valid_literal_block_scalar(v)
+                    && !v.contains("---")
+                    && !v.contains("...")
                 {
-                    self.emit_literal_block(v)?;
-                } else if need_quotes(v) {
-                    escape_str(self.writer, v)?;
+                    self.write_multiline(v)
                 } else {
-                    write!(self.writer, "{v}")?;
+                    self.write_plain_str(v)
+                }
+            }
+            Yaml::Boolean(v) => write!(self.writer, "{}", v).map_err(From::from),
+            Yaml::Integer(v) => write!(self.writer, "{}", v).map_err(From::from),
+            Yaml::Real(ref v) => write!(self.writer, "{}", v).map_err(From::from),
+            Yaml::Null => write!(self.writer, "~").map_err(From::from),
+            Yaml::BadValue => write!(self.writer, "!badvalue").map_err(From::from),
+            Yaml::Alias(id) => {
+                if let Some(loader) = self.loader {
+                    if let Some(anchor_name) = loader.get_anchor_name(id) {
+                        write!(self.writer, "*{}", anchor_name)?;
+                    }
+                } else {
+                    write!(self.writer, "*{}", id)?;
                 }
                 Ok(())
             }
-            Yaml::Boolean(v) => {
-                if v {
-                    self.writer.write_str("true")?;
-                } else {
-                    self.writer.write_str("false")?;
-                }
-                Ok(())
-            }
-            Yaml::Integer(v) => {
-                write!(self.writer, "{v}")?;
-                Ok(())
-            }
-            Yaml::Real(ref v) => {
-                write!(self.writer, "{v}")?;
-                Ok(())
-            }
-            Yaml::Null | Yaml::BadValue => {
-                write!(self.writer, "~")?;
-                Ok(())
-            }
-            // XXX(chenyh) Alias
-            Yaml::Alias(_) => Ok(()),
         }
     }
 
@@ -307,7 +341,23 @@ impl<'a> YamlEmitter<'a> {
                     write!(self.writer, ":")?;
                     self.emit_val(true, v)?;
                 } else {
-                    self.emit_node(k)?;
+                    // Check if this key is an alias
+                    match k {
+                        Yaml::Alias(id) => {
+                            if let Some(loader) = self.loader {
+                                if let Some(name) = loader.get_anchor_name(*id) {
+                                    write!(self.writer, "*{}", name)?;
+                                } else {
+                                    write!(self.writer, "*{}", id)?;
+                                }
+                            } else {
+                                write!(self.writer, "*{}", id)?;
+                            }
+                        }
+                        _ => {
+                            self.emit_node(k)?;
+                        }
+                    }
                     write!(self.writer, ":")?;
                     self.emit_val(false, v)?;
                 }
@@ -350,6 +400,52 @@ impl<'a> YamlEmitter<'a> {
                 self.emit_node(val)
             }
         }
+    }
+
+    fn write_indent(&mut self) -> EmitResult {
+        if self.level <= 0 {
+            return Ok(());
+        }
+        for _ in 0..self.level {
+            for _ in 0..self.best_indent {
+                write!(self.writer, " ")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_multiline(&mut self, v: &str) -> EmitResult {
+        if v.ends_with('\n') {
+            write!(self.writer, "|")?;
+        } else {
+            write!(self.writer, "|-")?;
+        }
+        writeln!(self.writer)?;
+        let parts: Vec<&str> = v.split('\n').collect();
+        let last_idx = if v.ends_with('\n') {
+            parts.len() - 2 // Skip the empty string at the end
+        } else {
+            parts.len() - 1
+        };
+        for (i, part) in parts.iter().enumerate() {
+            if i > last_idx {
+                break;
+            }
+            write!(self.writer, "  {}", part)?;
+            if i < last_idx {
+                write!(self.writer, "\n")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_plain_str(&mut self, v: &str) -> EmitResult {
+        if need_quotes(v) {
+            escape_str(self.writer, v)?;
+        } else {
+            write!(self.writer, "{}", v)?;
+        }
+        Ok(())
     }
 }
 

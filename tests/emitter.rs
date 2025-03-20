@@ -55,13 +55,17 @@ products:
   {}:
     empty hash key
             ";
+    let mut loader = YamlLoader::default();
     let docs = YamlLoader::load_from_str(s).unwrap();
     let doc = &docs[0];
     let mut writer = String::new();
     {
         let mut emitter = YamlEmitter::new(&mut writer);
+        emitter.set_loader(&loader);
         emitter.dump(doc).unwrap();
     }
+    println!("Original YAML:\n{s}");
+    println!("Emitted YAML:\n{writer}");
     let docs_new = match YamlLoader::load_from_str(&writer) {
         Ok(y) => y,
         Err(e) => panic!("{}", e),

@@ -75,7 +75,6 @@ fn parse_f64(v: &str) -> Option<f64> {
 /// Main structure for quickly parsing YAML.
 ///
 /// See [`YamlLoader::load_from_str`].
-#[derive(Default)]
 pub struct YamlLoader {
     /// The different YAML documents that are loaded.
     docs: Vec<Yaml>,
@@ -86,6 +85,23 @@ pub struct YamlLoader {
     anchor_map: BTreeMap<usize, Yaml>,
     /// An error, if one was encountered.
     error: Option<ScanError>,
+    // Track anchor names for emitting
+    anchor_names: BTreeMap<usize, String>,
+    next_anchor_id: usize,
+}
+
+impl Default for YamlLoader {
+    fn default() -> Self {
+        YamlLoader {
+            docs: Vec::new(),
+            doc_stack: Vec::new(),
+            key_stack: Vec::new(),
+            anchor_map: BTreeMap::new(),
+            error: None,
+            anchor_names: BTreeMap::new(),
+            next_anchor_id: 1,
+        }
+    }
 }
 
 impl MarkedEventReceiver for YamlLoader {
@@ -117,8 +133,21 @@ impl From<std::io::Error> for LoadError {
 }
 
 impl YamlLoader {
+    fn register_anchor(&mut self, name: String) -> usize {
+        let id = self.next_anchor_id;
+        self.next_anchor_id += 1;
+        // If this anchor name already exists, remove its old mapping
+        for (old_id, old_name) in self.anchor_names.iter() {
+            if old_name == &name {
+                self.anchor_map.remove(old_id);
+                break;
+            }
+        }
+        self.anchor_names.insert(id, name);
+        id
+    }
+
     fn on_event_impl(&mut self, ev: Event, mark: Marker) -> Result<(), ScanError> {
-        // println!("EV {:?}", ev);
         match ev {
             Event::DocumentStart | Event::Nothing | Event::StreamStart | Event::StreamEnd => {
                 // do nothing
@@ -139,7 +168,21 @@ impl YamlLoader {
                 self.insert_new_node(node, mark)?;
             }
             Event::MappingStart(aid, _, _, _) => {
-                self.doc_stack.push((Yaml::Hash(Hash::new()), aid));
+                let node = if aid > 0 {
+                    if let Some(referenced_node) = self.anchor_map.get(&aid) {
+                        // If it's an alias reference, clone the referenced node
+                        referenced_node.clone()
+                    } else {
+                        // If it's a new anchor, create new hash
+                        let hash = Yaml::Hash(Hash::new());
+                        self.anchor_map.insert(aid, hash.clone());
+                        hash
+                    }
+                } else {
+                    // Regular mapping, create new hash
+                    Yaml::Hash(Hash::new())
+                };
+                self.doc_stack.push((node, aid));
                 self.key_stack.push(Yaml::BadValue);
             }
             Event::MappingEnd => {
@@ -149,7 +192,7 @@ impl YamlLoader {
             }
             Event::Scalar(v, style, aid, tag) => {
                 let node = if style != TScalarStyle::Plain {
-                    Yaml::String(v)
+                    Yaml::String(v.clone())
                 } else if let Some(Tag {
                     ref handle,
                     ref suffix,
@@ -157,51 +200,48 @@ impl YamlLoader {
                 {
                     if handle == "tag:yaml.org,2002:" {
                         match suffix.as_ref() {
-                            "bool" => {
-                                // "true" or "false"
-                                match v.parse::<bool>() {
-                                    Err(_) => Yaml::BadValue,
-                                    Ok(v) => Yaml::Boolean(v),
-                                }
-                            }
+                            "bool" => match v.parse::<bool>() {
+                                Err(_) => Yaml::BadValue,
+                                Ok(v) => Yaml::Boolean(v),
+                            },
                             "int" => match v.parse::<i64>() {
                                 Err(_) => Yaml::BadValue,
                                 Ok(v) => Yaml::Integer(v),
                             },
                             "float" => match parse_f64(&v) {
-                                Some(_) => Yaml::Real(v),
+                                Some(_) => Yaml::Real(v.clone()),
                                 None => Yaml::BadValue,
                             },
                             "null" => match v.as_ref() {
                                 "~" | "null" => Yaml::Null,
                                 _ => Yaml::BadValue,
                             },
-                            _ => Yaml::String(v),
+                            _ => Yaml::String(v.clone()),
                         }
                     } else {
-                        Yaml::String(v)
+                        Yaml::String(v.clone())
                     }
                 } else {
-                    // Datatype is not specified, or unrecognized
                     Yaml::from_str(&v)
                 };
 
+                if aid > 0 {
+                    if !self.anchor_names.contains_key(&aid) {
+                        self.anchor_names.insert(aid, v);
+                    }
+                    self.anchor_map.insert(aid, node.clone());
+                }
                 self.insert_new_node((node, aid), mark)?;
             }
             Event::Alias(id) => {
-                let n = match self.anchor_map.get(&id) {
-                    Some(v) => v.clone(),
-                    None => Yaml::BadValue,
-                };
+                let n = Yaml::Alias(id);
                 self.insert_new_node((n, 0), mark)?;
             }
         }
-        // println!("DOC {:?}", self.doc_stack);
         Ok(())
     }
 
     fn insert_new_node(&mut self, node: (Yaml, usize), mark: Marker) -> Result<(), ScanError> {
-        // valid anchor id starts from 1
         if node.1 > 0 {
             self.anchor_map.insert(node.1, node.0.clone());
         }
@@ -210,21 +250,62 @@ impl YamlLoader {
         } else {
             let parent = self.doc_stack.last_mut().unwrap();
             match *parent {
-                (Yaml::Array(ref mut v), _) => v.push(node.0),
+                (Yaml::Array(ref mut v), _) => {
+                    let mut newval = node.0;
+                    if let Yaml::Alias(id) = newval {
+                        // Check for self-referential alias
+                        if let Some(actual_val) = self.anchor_map.get(&id) {
+                            if let Yaml::Hash(ref h) = actual_val {
+                                if h.is_empty() {
+                                    newval = Yaml::BadValue;
+                                } else {
+                                    newval = actual_val.clone();
+                                }
+                            } else {
+                                newval = actual_val.clone();
+                            }
+                        } else {
+                            newval = Yaml::BadValue;
+                        }
+                    }
+                    v.push(newval);
+                }
                 (Yaml::Hash(ref mut h), _) => {
                     let cur_key = self.key_stack.last_mut().unwrap();
-                    // current node is a key
                     if cur_key.is_badvalue() {
                         *cur_key = node.0;
-                    // current node is a value
                     } else {
                         let mut newkey = Yaml::BadValue;
                         mem::swap(&mut newkey, cur_key);
-                        if h.insert(newkey, node.0).is_some() {
-                            let inserted_key = h.back().unwrap().0;
+                        // Check if the key is an alias
+                        let mut actual_key = newkey;
+                        if let Yaml::Alias(id) = actual_key {
+                            if let Some(referenced_key) = self.anchor_map.get(&id) {
+                                actual_key = referenced_key.clone();
+                            }
+                        }
+                        // Check if the value is an alias
+                        let mut actual_val = node.0;
+                        if let Yaml::Alias(id) = actual_val {
+                            // Check for self-referential alias
+                            if let Some(referenced_val) = self.anchor_map.get(&id) {
+                                if let Yaml::Hash(ref h) = referenced_val {
+                                    if h.is_empty() {
+                                        actual_val = Yaml::BadValue;
+                                    } else {
+                                        actual_val = referenced_val.clone();
+                                    }
+                                } else {
+                                    actual_val = referenced_val.clone();
+                                }
+                            } else {
+                                actual_val = Yaml::BadValue;
+                            }
+                        }
+                        if h.insert(actual_key.clone(), actual_val).is_some() {
                             return Err(ScanError::new_string(
                                 mark,
-                                format!("{inserted_key:?}: duplicated key in mapping"),
+                                format!("{actual_key:?}: duplicated key in mapping"),
                             ));
                         }
                     }
@@ -269,6 +350,10 @@ impl YamlLoader {
     ) -> Result<Vec<Yaml>, ScanError> {
         let mut loader = YamlLoader::default();
         parser.load(&mut loader, true)?;
+        // Copy anchor names from parser
+        for (id, name) in parser.get_anchor_names() {
+            loader.anchor_names.insert(*id, name.clone());
+        }
         if let Some(e) = loader.error {
             Err(e)
         } else {
@@ -280,6 +365,20 @@ impl YamlLoader {
     #[must_use]
     pub fn documents(&self) -> &[Yaml] {
         &self.docs
+    }
+
+    /// Get the anchor name for a given ID
+    pub fn get_anchor_name(&self, id: usize) -> Option<&str> {
+        self.anchor_names.get(&id).map(|s| s.as_str())
+    }
+
+    pub fn get_anchor_id(&self, node: &Yaml) -> Option<usize> {
+        for (id, anchor_node) in &self.anchor_map {
+            if anchor_node == node {
+                return Some(*id);
+            }
+        }
+        None
     }
 }
 
