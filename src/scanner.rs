@@ -9,7 +9,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
-use std::{char, collections::VecDeque, error::Error, fmt};
+use std::{char, collections::HashMap, collections::VecDeque, error::Error, fmt};
 
 use arraydeque::ArrayDeque;
 
@@ -187,7 +187,10 @@ pub enum TokenType {
     /// End of an inline array.
     FlowSequenceEnd,
     /// Start of an inline mapping (`{ a: b, c: d }`).
-    FlowMappingStart,
+    ///
+    /// The optional usize is the ID of the position where the opening brace was found.
+    /// This ID can be used to retrieve the exact position from the Scanner's flow_mapping_positions.
+    FlowMappingStart(Option<usize>),
     /// End of an inline mapping.
     FlowMappingEnd,
     /// An entry in a block sequence (c.f.: [`TokenType::BlockSequenceStart`]).
@@ -400,6 +403,15 @@ pub struct Scanner<T> {
     flow_mapping_started: bool,
     /// Whether we currently are in an implicit flow mapping.
     implicit_flow_mapping: bool,
+    /// Stores the exact position of flow mapping opening braces.
+    ///
+    /// When a flow mapping start token is created, we store the exact position
+    /// of the opening brace '{' here. This helps with accurate position tracking
+    /// for flow-style mappings. The key is a unique ID that will be attached to
+    /// the FlowMappingStart token, and the value is the marker position.
+    flow_mapping_positions: HashMap<usize, Marker>,
+    /// A counter to generate unique IDs for flow mapping positions.
+    flow_mapping_id_counter: usize,
 }
 
 impl<T: Iterator<Item = char>> Iterator for Scanner<T> {
@@ -452,6 +464,8 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             leading_whitespace: true,
             flow_mapping_started: false,
             implicit_flow_mapping: false,
+            flow_mapping_positions: HashMap::new(),
+            flow_mapping_id_counter: 0,
         }
     }
 
@@ -711,7 +725,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         let nc = self.buffer[1];
         match c {
             '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart),
-            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart),
+            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart(None)),
             ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd),
             '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd),
             ',' => self.fetch_flow_entry(),
@@ -1409,9 +1423,19 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         self.allow_simple_key();
 
         let start_mark = self.mark;
+
+        // Store the exact position if this is a flow mapping start
+        let tok = match tok {
+            TokenType::FlowMappingStart(_) => {
+                let id = self.store_flow_mapping_position();
+                TokenType::FlowMappingStart(Some(id))
+            }
+            _ => tok,
+        };
+
         self.skip_non_blank();
 
-        if tok == TokenType::FlowMappingStart {
+        if matches!(tok, TokenType::FlowMappingStart(_)) {
             self.flow_mapping_started = true;
         }
 
@@ -2359,7 +2383,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
                 }
                 self.insert_token(
                     sk.token_number - self.tokens_parsed,
-                    Token(self.mark, TokenType::FlowMappingStart),
+                    Token(self.mark, TokenType::FlowMappingStart(None)),
                 );
             }
 
@@ -2377,7 +2401,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         } else {
             if self.implicit_flow_mapping {
                 self.tokens
-                    .push_back(Token(self.mark, TokenType::FlowMappingStart));
+                    .push_back(Token(self.mark, TokenType::FlowMappingStart(None)));
             }
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
@@ -2546,6 +2570,14 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             self.tokens
                 .push_back(Token(mark, TokenType::FlowMappingEnd));
         }
+    }
+
+    /// Stores the current position as a flow mapping start position and returns an ID
+    fn store_flow_mapping_position(&mut self) -> usize {
+        let id = self.flow_mapping_id_counter;
+        self.flow_mapping_id_counter += 1;
+        self.flow_mapping_positions.insert(id, self.mark);
+        id
     }
 }
 

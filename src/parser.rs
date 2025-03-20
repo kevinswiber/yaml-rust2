@@ -110,7 +110,13 @@ pub enum Event {
     /// The end of a sequence
     SequenceEnd,
     /// The start of a mapping with style information
-    MappingStart(usize, Option<Tag>, TMappingStyle),
+    ///
+    /// The parameters are:
+    /// - anchor_id: usize
+    /// - tag: Option<Tag>
+    /// - style: TMappingStyle
+    /// - position_id: Option<usize> - For flow-style mappings, the ID of the position in the scanner
+    MappingStart(usize, Option<Tag>, TMappingStyle, Option<usize>),
     /// The end of a mapping
     MappingEnd,
 }
@@ -721,10 +727,11 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 self.state = State::FlowSequenceFirstEntry;
                 Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
-            Token(mark, TokenType::FlowMappingStart) => {
+            Token(mark, TokenType::FlowMappingStart(position_id)) => {
                 self.state = State::FlowMappingFirstKey;
+                let anchor_id = self.register_anchor(String::new(), &mark);
                 Ok((
-                    Event::MappingStart(anchor_id, tag, TMappingStyle::Flow),
+                    Event::MappingStart(anchor_id, None, TMappingStyle::Flow, position_id),
                     mark,
                 ))
             }
@@ -735,7 +742,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
                 Ok((
-                    Event::MappingStart(anchor_id, tag, TMappingStyle::Block),
+                    Event::MappingStart(anchor_id, tag, TMappingStyle::Block, None),
                     mark,
                 ))
             }
@@ -926,7 +933,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
             Token(mark, TokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
-                Ok((Event::MappingStart(0, None, TMappingStyle::Flow), mark))
+                Ok((
+                    Event::MappingStart(0, None, TMappingStyle::Flow, None),
+                    mark,
+                ))
             }
             _ => {
                 self.push_state(State::FlowSequenceEntry);
