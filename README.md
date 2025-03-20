@@ -97,24 +97,32 @@ test suite](https://github.com/yaml/yaml-test-suite/).
 
 ## Fork Differences
 
-This fork (`bangarang` branch) enhances the original `yaml-rust2` with improved flow mapping handling and position tracking:
+This fork (`bangarang` branch) enhances the original `yaml-rust2` with improved flow mapping handling, position tracking, and anchor handling:
 
 1. **Enhanced Flow Mapping Position Tracking**
    - Added precise tracking of flow mapping opening brace positions
    - New `TMappingStyle` enum to distinguish between flow and block style mappings
    - Flow mapping positions are now stored with unique IDs for accurate source location lookup
 
-2. **API Enhancements**
+2. **Improved Anchor Handling**
+   - Fixed anchor redefinition behavior to comply with YAML spec
+   - Each anchor definition now gets a unique ID, even when redefining an existing anchor name
+   - Added `get_anchor_names()` method to access anchor name mappings
+   - Proper support for empty scalar anchors in various positions
+
+3. **API Enhancements**
    - Added `get_flow_mapping_position(id: usize) -> Option<Marker>` to retrieve exact positions
    - Added `flow_mapping_positions() -> Option<&HashMap<usize, Marker>>` to access all tracked positions
    - Enhanced `MappingStart` event with style information and position tracking
+   - Added `get_anchor_names() -> &HashMap<usize, String>` for anchor name lookup
 
-3. **Developer Notes**
+4. **Developer Notes**
    - The fork maintains backward compatibility while adding new features
    - Flow mapping positions are tracked using a counter-based ID system
    - Position tracking is optional and won't affect existing code that doesn't use it
+   - Anchor IDs are unique and sequential, starting from 1
 
-These changes are particularly useful for tools that need precise source location information for flow-style mappings, such as linters, formatters, or IDEs.
+These changes are particularly useful for tools that need precise source location information for flow-style mappings and proper anchor handling, such as linters, formatters, or IDEs.
 
 ## Upgrading from yaml-rust
 
