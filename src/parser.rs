@@ -1091,6 +1091,22 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
         }
     }
+
+    /// Get the position for a flow mapping start by its ID
+    ///
+    /// Returns the exact position of the opening brace `{` for a flow-style mapping
+    /// if the position_id was stored by the scanner.
+    pub fn get_flow_mapping_position(&self, id: usize) -> Option<Marker> {
+        self.scanner.get_flow_mapping_position(id)
+    }
+
+    /// Get all flow mapping positions tracked by the scanner
+    ///
+    /// This can be used to enhance position tracking for flow-style mappings
+    /// by accessing the exact position of opening braces.
+    pub fn flow_mapping_positions(&self) -> Option<&HashMap<usize, Marker>> {
+        self.scanner.flow_mapping_positions()
+    }
 }
 
 #[cfg(test)]

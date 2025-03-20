@@ -2579,6 +2579,26 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         self.flow_mapping_positions.insert(id, self.mark);
         id
     }
+
+    /// Get the position for a flow mapping start by its ID
+    ///
+    /// Returns the exact position of the opening brace `{` for a flow-style mapping
+    /// if the position_id is found.
+    pub fn get_flow_mapping_position(&self, id: usize) -> Option<Marker> {
+        self.flow_mapping_positions.get(&id).copied()
+    }
+
+    /// Get all flow mapping positions tracked by the scanner
+    ///
+    /// This can be used to enhance position tracking for flow-style mappings
+    /// by accessing the exact position of opening braces.
+    pub fn flow_mapping_positions(&self) -> Option<&HashMap<usize, Marker>> {
+        if self.flow_mapping_positions.is_empty() {
+            None
+        } else {
+            Some(&self.flow_mapping_positions)
+        }
+    }
 }
 
 /// Behavior to adopt regarding treating tabs as whitespace.
