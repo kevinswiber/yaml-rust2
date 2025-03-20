@@ -95,6 +95,27 @@ This implementation is fully compatible with the YAML 1.2 specification. In
 order to help with compliance, `yaml-rust2` tests against (and passes) the [YAML
 test suite](https://github.com/yaml/yaml-test-suite/).
 
+## Fork Differences
+
+This fork (`bangarang` branch) enhances the original `yaml-rust2` with improved flow mapping handling and position tracking:
+
+1. **Enhanced Flow Mapping Position Tracking**
+   - Added precise tracking of flow mapping opening brace positions
+   - New `TMappingStyle` enum to distinguish between flow and block style mappings
+   - Flow mapping positions are now stored with unique IDs for accurate source location lookup
+
+2. **API Enhancements**
+   - Added `get_flow_mapping_position(id: usize) -> Option<Marker>` to retrieve exact positions
+   - Added `flow_mapping_positions() -> Option<&HashMap<usize, Marker>>` to access all tracked positions
+   - Enhanced `MappingStart` event with style information and position tracking
+
+3. **Developer Notes**
+   - The fork maintains backward compatibility while adding new features
+   - Flow mapping positions are tracked using a counter-based ID system
+   - Position tracking is optional and won't affect existing code that doesn't use it
+
+These changes are particularly useful for tools that need precise source location information for flow-style mappings, such as linters, formatters, or IDEs.
+
 ## Upgrading from yaml-rust
 
 You can use `yaml-rust2` as a drop-in replacement for the original `yaml-rust` crate.
