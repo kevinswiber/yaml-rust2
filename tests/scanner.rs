@@ -111,7 +111,7 @@ fn test_a_flow_mapping() {
 ";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart);
+    next!(p, FlowMappingStart(_));
     next!(p, Key);
     next!(p, Scalar(TScalarStyle::Plain, _));
     next!(p, Value);
@@ -327,7 +327,7 @@ fn test_collections_in_mapping() {
 
 #[test]
 fn test_spec_ex7_3() {
-    let s = "
+    let s = r"
 {
     ? foo :,
     : bar,
@@ -335,7 +335,7 @@ fn test_spec_ex7_3() {
 ";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart);
+    next!(p, FlowMappingStart(_));
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "foo");
     next!(p, Value);
@@ -351,13 +351,13 @@ fn test_spec_ex7_3() {
 #[test]
 fn test_plain_scalar_starting_with_indicators_in_flow() {
     // "Plain scalars must not begin with most indicators, as this would cause ambiguity with
-    // other YAML constructs. However, the “:”, “?” and “-” indicators may be used as the first
-    // character if followed by a non-space “safe” character, as this causes no ambiguity."
+    // other YAML constructs. However, the ":", "?" and "-" indicators may be used as the first
+    // character if followed by a non-space "safe" character, as this causes no ambiguity."
 
     let s = "{a: :b}";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart);
+    next!(p, FlowMappingStart(_));
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "a");
     next!(p, Value);
@@ -369,11 +369,23 @@ fn test_plain_scalar_starting_with_indicators_in_flow() {
     let s = "{a: ?b}";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart);
+    next!(p, FlowMappingStart(_));
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "a");
     next!(p, Value);
     next_scalar!(p, TScalarStyle::Plain, "?b");
+    next!(p, FlowMappingEnd);
+    next!(p, StreamEnd);
+    end!(p);
+
+    let s = "{a: -b}";
+    let mut p = Scanner::new(s.chars());
+    next!(p, StreamStart(..));
+    next!(p, FlowMappingStart(_));
+    next!(p, Key);
+    next_scalar!(p, TScalarStyle::Plain, "a");
+    next!(p, Value);
+    next_scalar!(p, TScalarStyle::Plain, "-b");
     next!(p, FlowMappingEnd);
     next!(p, StreamEnd);
     end!(p);
