@@ -10,9 +10,9 @@ use std::{collections::BTreeMap, convert::TryFrom, mem, ops::Index, ops::IndexMu
 use encoding_rs::{Decoder, DecoderResult, Encoding};
 use hashlink::LinkedHashMap;
 
-use crate::parser::{Event, MarkedEventReceiver, Parser, Tag};
-use crate::position::PositionTracker;
-use crate::scanner::{Marker, ScanError, TScalarStyle};
+use crate::parser::{Event, EventReceiver, MarkedEventReceiver, Parser, Tag};
+use crate::position::{PositionSpan, PositionTracker};
+use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
 
 /// A YAML node is stored as this `Yaml` enumeration, which provides an easy way to
 /// access your YAML document.
@@ -84,6 +84,8 @@ pub struct YamlLoader {
     doc_stack: Vec<(Yaml, usize)>,
     key_stack: Vec<Yaml>,
     anchor_map: BTreeMap<usize, Yaml>,
+    /// Position tracker for anchor and alias management
+    position_tracker: PositionTracker,
     /// An error, if one was encountered.
     error: Option<ScanError>,
     // Track anchor names for emitting
@@ -98,6 +100,7 @@ impl Default for YamlLoader {
             doc_stack: Vec::new(),
             key_stack: Vec::new(),
             anchor_map: BTreeMap::new(),
+            position_tracker: PositionTracker::new(),
             error: None,
             anchor_names: BTreeMap::new(),
             next_anchor_id: 1,
@@ -162,21 +165,42 @@ impl YamlLoader {
                 }
             }
             Event::SequenceStart(aid, _) => {
+                // Track the sequence start in the position tracker
+                let span = self
+                    .position_tracker
+                    .process_event(&Event::SequenceStart(aid, None), mark);
+
                 self.doc_stack.push((Yaml::Array(Vec::new()), aid));
+
+                // If this is an anchor, store it in position_tracker
+                if aid > 0 {
+                    let empty_array = Yaml::Array(Vec::new());
+                    self.position_tracker.track_anchor(aid, mark);
+                    self.position_tracker.store_anchor_node(aid, empty_array);
+                }
             }
             Event::SequenceEnd => {
+                // Track the sequence end in the position tracker
+                self.position_tracker
+                    .process_event(&Event::SequenceEnd, mark);
+
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
             Event::MappingStart(aid, _, _) => {
+                // Track the mapping start in the position tracker
+                self.position_tracker
+                    .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
+
                 let node = if aid > 0 {
-                    if let Some(referenced_node) = self.anchor_map.get(&aid) {
-                        // If it's an alias reference, clone the referenced node
+                    if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
+                        // If it's an alias reference, get the referenced node from position_tracker
                         referenced_node.clone()
                     } else {
                         // If it's a new anchor, create new hash
                         let hash = Yaml::Hash(Hash::new());
-                        self.anchor_map.insert(aid, hash.clone());
+                        // Store the node in the position_tracker
+                        self.position_tracker.store_anchor_node(aid, hash.clone());
                         hash
                     }
                 } else {
@@ -185,8 +209,18 @@ impl YamlLoader {
                 };
                 self.doc_stack.push((node, aid));
                 self.key_stack.push(Yaml::BadValue);
+
+                if aid > 0 {
+                    self.position_tracker.track_anchor(aid, mark);
+                    self.position_tracker
+                        .store_anchor_node(aid, Yaml::Hash(Hash::new()));
+                }
             }
             Event::MappingEnd => {
+                // Track the mapping end in the position tracker
+                self.position_tracker
+                    .process_event(&Event::MappingEnd, mark);
+
                 self.key_stack.pop().unwrap();
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
@@ -230,11 +264,16 @@ impl YamlLoader {
                     if !self.anchor_names.contains_key(&aid) {
                         self.anchor_names.insert(aid, v);
                     }
-                    self.anchor_map.insert(aid, node.clone());
+                    // Store the node in position_tracker
+                    self.position_tracker.store_anchor_node(aid, node.clone());
                 }
                 self.insert_new_node((node, aid), mark)?;
             }
             Event::Alias(id) => {
+                // Track the alias event in the position tracker
+                self.position_tracker.process_event(&Event::Alias(id), mark);
+
+                // Create the alias node as before
                 let n = Yaml::Alias(id);
                 self.insert_new_node((n, 0), mark)?;
             }
@@ -244,7 +283,9 @@ impl YamlLoader {
 
     fn insert_new_node(&mut self, node: (Yaml, usize), mark: Marker) -> Result<(), ScanError> {
         if node.1 > 0 {
-            self.anchor_map.insert(node.1, node.0.clone());
+            // Store the node in position_tracker instead of anchor_map
+            self.position_tracker
+                .store_anchor_node(node.1, node.0.clone());
         }
         if self.doc_stack.is_empty() {
             self.doc_stack.push(node);
@@ -254,16 +295,19 @@ impl YamlLoader {
                 (Yaml::Array(ref mut v), _) => {
                     let mut newval = node.0;
                     if let Yaml::Alias(id) = newval {
+                        // Get from position_tracker
+                        let actual_val = self.position_tracker.get_anchor_yaml(id);
+
                         // Check for self-referential alias
-                        if let Some(actual_val) = self.anchor_map.get(&id) {
+                        if let Some(actual_val) = actual_val {
                             if let Yaml::Hash(ref h) = actual_val {
                                 if h.is_empty() {
                                     newval = Yaml::BadValue;
                                 } else {
-                                    newval = actual_val.clone();
+                                    newval = actual_val;
                                 }
                             } else {
-                                newval = actual_val.clone();
+                                newval = actual_val;
                             }
                         } else {
                             newval = Yaml::BadValue;
@@ -281,23 +325,28 @@ impl YamlLoader {
                         // Check if the key is an alias
                         let mut actual_key = newkey;
                         if let Yaml::Alias(id) = actual_key {
-                            if let Some(referenced_key) = self.anchor_map.get(&id) {
-                                actual_key = referenced_key.clone();
+                            // Get from position_tracker
+                            if let Some(referenced_key) = self.position_tracker.get_anchor_yaml(id)
+                            {
+                                actual_key = referenced_key;
                             }
                         }
                         // Check if the value is an alias
                         let mut actual_val = node.0;
                         if let Yaml::Alias(id) = actual_val {
+                            // Get from position_tracker
+                            let referenced_val = self.position_tracker.get_anchor_yaml(id);
+
                             // Check for self-referential alias
-                            if let Some(referenced_val) = self.anchor_map.get(&id) {
+                            if let Some(referenced_val) = referenced_val {
                                 if let Yaml::Hash(ref h) = referenced_val {
                                     if h.is_empty() {
                                         actual_val = Yaml::BadValue;
                                     } else {
-                                        actual_val = referenced_val.clone();
+                                        actual_val = referenced_val;
                                     }
                                 } else {
-                                    actual_val = referenced_val.clone();
+                                    actual_val = referenced_val;
                                 }
                             } else {
                                 actual_val = Yaml::BadValue;
@@ -374,6 +423,12 @@ impl YamlLoader {
     }
 
     pub fn get_anchor_id(&self, node: &Yaml) -> Option<usize> {
+        // First try using position_tracker to find the anchor ID
+        if let Some(id) = self.position_tracker.find_anchor_id(node) {
+            return Some(id);
+        }
+
+        // Fall back to scanning the anchor_map (for backward compatibility)
         for (id, anchor_node) in &self.anchor_map {
             if anchor_node == node {
                 return Some(*id);
@@ -712,7 +767,7 @@ impl Yaml {
     /// use yaml_rust2::yaml::Yaml;
     ///
     /// assert_eq!(Yaml::BadValue.or(Yaml::Integer(3)),  Yaml::Integer(3));
-    /// assert_eq!(Yaml::Integer(3).or(Yaml::BadValue),  Yaml::Integer(3));
+    /// assert_eq!(Yaml::Integer(3).or(Yaml::Integer(7)),  Yaml::Integer(3));
     /// ```
     #[must_use]
     pub fn or(self, other: Self) -> Self {
@@ -1077,13 +1132,33 @@ impl PositionTrackedLoader {
                 }
             }
             Event::SequenceStart(aid, _) => {
+                // Track the sequence start in the position tracker
+                let span = self
+                    .position_tracker
+                    .process_event(&Event::SequenceStart(aid, None), mark);
+
                 self.doc_stack.push((Yaml::Array(Vec::new()), aid));
+
+                // If this is an anchor, store it in position_tracker
+                if aid > 0 {
+                    let empty_array = Yaml::Array(Vec::new());
+                    self.position_tracker.track_anchor(aid, mark);
+                    self.position_tracker.store_anchor_node(aid, empty_array);
+                }
             }
             Event::SequenceEnd => {
+                // Track the sequence end in the position tracker
+                self.position_tracker
+                    .process_event(&Event::SequenceEnd, mark);
+
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
             Event::MappingStart(aid, _, _) => {
+                // Track the mapping start in the position tracker
+                self.position_tracker
+                    .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
+
                 let node = if aid > 0 {
                     if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
                         // If it's an alias reference, get the referenced node from position_tracker
@@ -1101,8 +1176,18 @@ impl PositionTrackedLoader {
                 };
                 self.doc_stack.push((node, aid));
                 self.key_stack.push(Yaml::BadValue);
+
+                if aid > 0 {
+                    self.position_tracker.track_anchor(aid, mark);
+                    self.position_tracker
+                        .store_anchor_node(aid, Yaml::Hash(Hash::new()));
+                }
             }
             Event::MappingEnd => {
+                // Track the mapping end in the position tracker
+                self.position_tracker
+                    .process_event(&Event::MappingEnd, mark);
+
                 self.key_stack.pop().unwrap();
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
@@ -1152,6 +1237,10 @@ impl PositionTrackedLoader {
                 self.insert_new_node((node, aid), mark)?;
             }
             Event::Alias(id) => {
+                // Track the alias event in the position tracker
+                self.position_tracker.process_event(&Event::Alias(id), mark);
+
+                // Create the alias node as before
                 let n = Yaml::Alias(id);
                 self.insert_new_node((n, 0), mark)?;
             }
@@ -1173,16 +1262,19 @@ impl PositionTrackedLoader {
                 (Yaml::Array(ref mut v), _) => {
                     let mut newval = node.0;
                     if let Yaml::Alias(id) = newval {
-                        // Check for self-referential alias using position_tracker
-                        if let Some(actual_val) = self.position_tracker.get_anchor_yaml(id) {
+                        // Get from position_tracker
+                        let actual_val = self.position_tracker.get_anchor_yaml(id);
+
+                        // Check for self-referential alias
+                        if let Some(actual_val) = actual_val {
                             if let Yaml::Hash(ref h) = actual_val {
                                 if h.is_empty() {
                                     newval = Yaml::BadValue;
                                 } else {
-                                    newval = actual_val.clone();
+                                    newval = actual_val;
                                 }
                             } else {
-                                newval = actual_val.clone();
+                                newval = actual_val;
                             }
                         } else {
                             newval = Yaml::BadValue;
@@ -1200,25 +1292,28 @@ impl PositionTrackedLoader {
                         // Check if the key is an alias
                         let mut actual_key = newkey;
                         if let Yaml::Alias(id) = actual_key {
+                            // Get from position_tracker
                             if let Some(referenced_key) = self.position_tracker.get_anchor_yaml(id)
                             {
-                                actual_key = referenced_key.clone();
+                                actual_key = referenced_key;
                             }
                         }
                         // Check if the value is an alias
                         let mut actual_val = node.0;
                         if let Yaml::Alias(id) = actual_val {
-                            // Check for self-referential alias using position_tracker
-                            if let Some(referenced_val) = self.position_tracker.get_anchor_yaml(id)
-                            {
+                            // Get from position_tracker
+                            let referenced_val = self.position_tracker.get_anchor_yaml(id);
+
+                            // Check for self-referential alias
+                            if let Some(referenced_val) = referenced_val {
                                 if let Yaml::Hash(ref h) = referenced_val {
                                     if h.is_empty() {
                                         actual_val = Yaml::BadValue;
                                     } else {
-                                        actual_val = referenced_val.clone();
+                                        actual_val = referenced_val;
                                     }
                                 } else {
-                                    actual_val = referenced_val.clone();
+                                    actual_val = referenced_val;
                                 }
                             } else {
                                 actual_val = Yaml::BadValue;

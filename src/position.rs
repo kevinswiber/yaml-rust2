@@ -390,6 +390,29 @@ impl PositionTracker {
             }
         }
     }
+
+    /// Find an anchor ID for a given node
+    ///
+    /// This performs a reverse lookup, finding the anchor ID
+    /// associated with a specific node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The YAML node to look up
+    ///
+    /// # Returns
+    ///
+    /// * `Some(usize)` - The anchor ID if found
+    /// * `None` - If no anchor is associated with this node
+    #[must_use]
+    pub fn find_anchor_id(&self, node: &Yaml) -> Option<usize> {
+        for (id, anchor_node) in &self.anchor_nodes {
+            if anchor_node == node {
+                return Some(*id);
+            }
+        }
+        None
+    }
 }
 
 impl Default for PositionTracker {

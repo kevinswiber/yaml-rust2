@@ -486,23 +486,16 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 
 ### Stage 4: Remove anchor_map (in progress)
 
-- [x] Enhance the `PositionTracker` to store and retrieve anchor nodes by ID
-  - Added `store_anchor_node` and `get_anchor_node` methods
-  - Added helper method `get_anchor_yaml` for compatibility
-  - Implemented proper node type conversion for scalar values
-  
+- [x] Identify places using `anchor_map` in the codebase
 - [x] Create experimental `PositionTrackedLoader` that uses `PositionTracker` instead of `anchor_map`
-  - Implemented fully compatible API for loading YAML documents
-  - Verified functionality with comprehensive tests for anchors and aliases
-  - Demonstrated handling of complex anchor/alias relationships including circular references
-  
+- [x] Add feature flag to switch between `YamlLoader` and `PositionTrackedLoader`
+- [x] Add test cases for `PositionTrackedLoader`
+- [x] Add support for `find_anchor_id` for reverse lookups in `PositionTracker`
+- [x] Begin migration of `YamlLoader` to use `position_tracker` alongside `anchor_map`
 - [ ] Replace all `anchor_map` usages in the codebase with `PositionTracker`
   - Gradually migrate code that depends on `anchor_map`
-  - Ensure full backward compatibility during transition
-  
+  - Ensure backward compatibility during the transition
 - [ ] Remove `anchor_map` field from `YamlLoader`
-  - Make `YamlLoader` use the `PositionTracker` implementation
-  - Update documentation to reflect the changes
 
 ## Future Considerations
 
