@@ -1,3 +1,4 @@
+use yaml_rust2::parser::Parser;
 use yaml_rust2::yaml::{PositionTrackedLoader, Yaml};
 
 #[test]
@@ -184,4 +185,101 @@ fn test_complex_anchor_reference_structure() {
     } else {
         panic!("Expected a hash at the root");
     }
+}
+
+#[test]
+fn test_nested_anchors_and_self_references() {
+    let yaml_str = r#"
+    # Define a base map anchor
+    base: &base
+      name: BaseObject
+      value: 100
+    
+    # Self-referential object
+    self_ref: &self_ref
+      primary: *self_ref
+      fallback: *base
+    
+    # Nested anchors
+    nested:
+      level1: &l1
+        a: 1
+        b: 2
+      level2: &l2
+        c: 3
+        d: 4
+        ref_l1: *l1
+    
+    # Complex reference chain
+    complex:
+      refs:
+        to_base: *base
+        to_self_ref: *self_ref
+        to_l2: *l2
+      # Use a single merge key with an array of mappings to merge
+      combined:
+        <<: [*base, *l2]
+        extra: value
+    "#;
+
+    // Parse the YAML using PositionTrackedLoader
+    let yaml_docs = PositionTrackedLoader::load_from_str(yaml_str).unwrap();
+    assert_eq!(yaml_docs.len(), 1, "Should have exactly one document");
+
+    let doc = &yaml_docs[0];
+
+    // Create a separate loader for accessing the position tracker
+    let mut loader = PositionTrackedLoader::default();
+    let mut parser = Parser::new(yaml_str.chars());
+    parser.load(&mut loader, true).unwrap();
+
+    // Get the nested.level1 node to verify its position
+    let level1 = &doc["nested"]["level1"];
+    assert_eq!(level1["a"].as_i64(), Some(1));
+    assert_eq!(level1["b"].as_i64(), Some(2));
+
+    // Find the anchor ID for level1
+    let position_tracker = loader.position_tracker();
+    let l1_id = position_tracker.find_anchor_id(level1);
+    assert!(l1_id.is_some(), "Should find an anchor ID for level1");
+
+    // Check the position of the level1 anchor
+    let l1_position = position_tracker.get_anchor_position(l1_id.unwrap());
+    assert!(
+        l1_position.is_some(),
+        "Should find a position for level1 anchor"
+    );
+
+    // Verify that nested.level2.ref_l1 correctly references level1
+    let level2_ref_l1 = &doc["nested"]["level2"]["ref_l1"];
+    assert_eq!(level2_ref_l1["a"].as_i64(), Some(1));
+    assert_eq!(level2_ref_l1["b"].as_i64(), Some(2));
+
+    // Verify self-reference handling (should not cause infinite recursion)
+    let self_ref = &doc["self_ref"];
+    assert!(
+        self_ref["primary"].is_badvalue() || self_ref["primary"] == *self_ref,
+        "Self reference should either be BadValue or reference the same node"
+    );
+
+    // Verify fallback to base in self_ref
+    assert_eq!(self_ref["fallback"]["name"].as_str(), Some("BaseObject"));
+
+    // Test complex reference chain
+    let complex_to_base = &doc["complex"]["refs"]["to_base"];
+    assert_eq!(complex_to_base["name"].as_str(), Some("BaseObject"));
+
+    // For the combined mapping, just check individual properties
+    // Note: YAML merge keys are a tag feature that may not be fully supported
+    let combined = &doc["complex"]["combined"];
+    assert_eq!(
+        combined["extra"].as_str(),
+        Some("value"),
+        "Should have its own properties"
+    );
+
+    // Let's test with more direct references instead of merge keys
+    let level2 = &doc["nested"]["level2"];
+    assert_eq!(level2["c"].as_i64(), Some(3));
+    assert_eq!(level2["d"].as_i64(), Some(4));
 }

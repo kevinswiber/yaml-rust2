@@ -10,8 +10,8 @@ use std::{collections::BTreeMap, convert::TryFrom, mem, ops::Index, ops::IndexMu
 use encoding_rs::{Decoder, DecoderResult, Encoding};
 use hashlink::LinkedHashMap;
 
-use crate::parser::{Event, EventReceiver, MarkedEventReceiver, Parser, Tag};
-use crate::position::{PositionSpan, PositionTracker};
+use crate::parser::{Event, MarkedEventReceiver, Parser, Tag};
+use crate::position::PositionTracker;
 use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
 
 /// A YAML node is stored as this `Yaml` enumeration, which provides an easy way to
@@ -137,16 +137,15 @@ impl From<std::io::Error> for LoadError {
 }
 
 impl YamlLoader {
+    /// Register a new anchor with the given name
+    ///
+    /// This method assigns a unique ID to an anchor name and stores the mapping.
+    /// Note: Currently this method is not actively used as anchor tracking is primarily
+    /// handled through the position_tracker, but it's kept for potential future use.
+    #[allow(dead_code)]
     fn register_anchor(&mut self, name: String) -> usize {
         let id = self.next_anchor_id;
         self.next_anchor_id += 1;
-        // If this anchor name already exists, remove its old mapping
-        for (old_id, old_name) in self.anchor_names.iter() {
-            if old_name == &name {
-                self.anchor_map.remove(old_id);
-                break;
-            }
-        }
         self.anchor_names.insert(id, name);
         id
     }
@@ -166,7 +165,7 @@ impl YamlLoader {
             }
             Event::SequenceStart(aid, _) => {
                 // Track the sequence start in the position tracker
-                let span = self
+                let _span = self
                     .position_tracker
                     .process_event(&Event::SequenceStart(aid, None), mark);
 
@@ -189,7 +188,8 @@ impl YamlLoader {
             }
             Event::MappingStart(aid, _, _) => {
                 // Track the mapping start in the position tracker
-                self.position_tracker
+                let _span = self
+                    .position_tracker
                     .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
 
                 let node = if aid > 0 {
@@ -422,6 +422,18 @@ impl YamlLoader {
         self.anchor_names.get(&id).map(|s| s.as_str())
     }
 
+    /// Get the anchor ID associated with a node, if any.
+    ///
+    /// This method searches the anchor map for a node that matches the provided one,
+    /// and returns its anchor ID if found.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node to look up
+    ///
+    /// # Returns
+    ///
+    /// The anchor ID if the node is anchored, or None otherwise
     pub fn get_anchor_id(&self, node: &Yaml) -> Option<usize> {
         // First try using position_tracker to find the anchor ID
         if let Some(id) = self.position_tracker.find_anchor_id(node) {
@@ -1085,13 +1097,39 @@ c: [1, 2]
     }
 }
 
-/// Experimental YamlLoader that uses PositionTracker for anchor management
+/// A YAML document loader that provides enhanced position tracking capabilities.
 ///
-/// This is a transitional implementation that uses the enhanced PositionTracker
-/// instead of the anchor_map for managing anchors and aliases in YAML documents.
+/// This loader integrates with the `PositionTracker` to maintain detailed position information
+/// for YAML constructs, with particular emphasis on tracking anchor positions and the nodes
+/// they reference. Unlike the basic `YamlLoader`, it maintains complete information about
+/// where anchors are defined and what nodes they reference, which is essential for
+/// more advanced YAML processing tasks.
 ///
-/// This loader provides the same functionality as the original YamlLoader
-/// but delegates anchor tracking to the PositionTracker.
+/// # Features
+///
+/// - Tracks both positions and content of anchored nodes
+/// - Resolves aliases with complete node content
+/// - Maintains the relationship between anchors and their positions
+/// - Provides access to the underlying position tracking system
+///
+/// # Example
+///
+/// ```
+/// use yaml_rust2::yaml::PositionTrackedLoader;
+/// use yaml_rust2::Yaml;
+///
+/// let yaml_str = "
+/// anchors:
+///   seq: &seq_anchor [1, 2, 3]
+///   map: &map_anchor {a: 1, b: 2}
+/// references:
+///   seq_ref: *seq_anchor
+///   map_ref: *map_anchor
+/// ";
+///
+/// let docs = PositionTrackedLoader::load_from_str(yaml_str).unwrap();
+/// // Now docs contains the YAML documents with all anchors and aliases properly resolved
+/// ```
 #[derive(Default)]
 pub struct PositionTrackedLoader {
     /// The different YAML documents that are loaded.
@@ -1111,6 +1149,11 @@ pub struct PositionTrackedLoader {
 
 impl PositionTrackedLoader {
     /// Register a new anchor with the given name
+    ///
+    /// This method assigns a unique ID to an anchor name and stores the mapping.
+    /// Note: Currently this method is not actively used as anchor tracking is primarily
+    /// handled through the position_tracker, but it's kept for potential future use.
+    #[allow(dead_code)]
     fn register_anchor(&mut self, name: String) -> usize {
         let id = self.next_anchor_id;
         self.next_anchor_id += 1;
@@ -1133,7 +1176,7 @@ impl PositionTrackedLoader {
             }
             Event::SequenceStart(aid, _) => {
                 // Track the sequence start in the position tracker
-                let span = self
+                let _span = self
                     .position_tracker
                     .process_event(&Event::SequenceStart(aid, None), mark);
 
@@ -1156,7 +1199,8 @@ impl PositionTrackedLoader {
             }
             Event::MappingStart(aid, _, _) => {
                 // Track the mapping start in the position tracker
-                self.position_tracker
+                let _span = self
+                    .position_tracker
                     .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
 
                 let node = if aid > 0 {
@@ -1393,6 +1437,59 @@ impl PositionTrackedLoader {
     #[must_use]
     pub fn get_anchor_name(&self, id: usize) -> Option<&str> {
         self.anchor_names.get(&id).map(|s| s.as_ref())
+    }
+
+    /// Get the position tracker instance
+    ///
+    /// This provides access to the underlying position tracking system,
+    /// allowing for advanced position queries and anchor tracking operations.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the position tracker used by this loader
+    #[must_use]
+    pub fn position_tracker(&self) -> &PositionTracker {
+        &self.position_tracker
+    }
+
+    /// Get the mutable position tracker instance
+    ///
+    /// This provides mutable access to the underlying position tracking system,
+    /// allowing for advanced position queries and anchor tracking operations.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the position tracker used by this loader
+    pub fn position_tracker_mut(&mut self) -> &mut PositionTracker {
+        &mut self.position_tracker
+    }
+
+    /// Get the position of a specific anchor
+    ///
+    /// # Arguments
+    ///
+    /// * `anchor_id` - The ID of the anchor to look up
+    ///
+    /// # Returns
+    ///
+    /// The position of the anchor, or None if not found
+    #[must_use]
+    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<Marker> {
+        self.position_tracker.get_anchor_position(anchor_id)
+    }
+
+    /// Get the node associated with a specific anchor
+    ///
+    /// # Arguments
+    ///
+    /// * `anchor_id` - The ID of the anchor to look up
+    ///
+    /// # Returns
+    ///
+    /// The YAML node associated with the anchor, or None if not found
+    #[must_use]
+    pub fn get_anchor_yaml(&self, anchor_id: usize) -> Option<Yaml> {
+        self.position_tracker.get_anchor_yaml(anchor_id)
     }
 }
 

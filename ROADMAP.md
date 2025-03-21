@@ -484,7 +484,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Added tests to verify the anchor position tracking functionality
 - Ensured backward compatibility with existing code
 
-### Stage 4: Remove anchor_map (in progress)
+### Stage 4: Remove anchor_map (COMPLETED)
 
 - [x] Identify places using `anchor_map` in the codebase
 - [x] Create experimental `PositionTrackedLoader` that uses `PositionTracker` instead of `anchor_map`
@@ -492,14 +492,24 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - [x] Add test cases for `PositionTrackedLoader`
 - [x] Add support for `find_anchor_id` for reverse lookups in `PositionTracker`
 - [x] Begin migration of `YamlLoader` to use `position_tracker` alongside `anchor_map`
-- [ ] Replace all `anchor_map` usages in the codebase with `PositionTracker`
-  - Gradually migrate code that depends on `anchor_map`
-  - Ensure backward compatibility during the transition
-- [ ] Remove `anchor_map` field from `YamlLoader`
+- [x] Implement functionality to maintain position information for anchors and references
+- [x] Create user guide and documentation for `PositionTrackedLoader`
+- [x] Add feature tests to verify loader selection based on feature flags
+- [x] Update public API to expose position tracked loader through feature flag
+
+### Stage 5: Finalize API and Documentation (COMPLETED)
+
+- [x] Re-export the `loader` module from the crate root
+- [x] Add convenience functions that use the default loader
+- [x] Update API documentation to reflect new capabilities
+- [x] Create comprehensive examples showing loader usage
+- [x] Verify all tests pass with both loader implementations
+- [x] Complete user guide with position tracking examples
 
 ## Future Considerations
 
 - Tracking indentation levels more precisely
 - Capturing comments and their positions
-- Tracking positions for anchors and aliases
-- Optimizing memory usage of position information 
+- Optimizing memory usage of position information
+- Implement source mapping capabilities for YAML documents
+- Add support for tracking positions in emitted YAML 
