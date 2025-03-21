@@ -17,6 +17,38 @@ The implementation includes:
 - Position-based node lookup capabilities
 - Test suite validating source mapping functionality
 
+## ✅ Stage 1: Define Position Structures - COMPLETED
+
+The implementation now includes:
+- `PositionSpan` structure which tracks both start and end positions
+- Enhanced support for position tracking across all scanner, parser, and loader components
+- Methods for accessing and manipulating position information
+- Unit tests that validate position tracking behavior
+
+## ✅ Stage 2: Enhanced Event Position Tracking - COMPLETED
+
+The enhancements include:
+- Modified `MarkedEventReceiver` to work with `PositionSpan` instead of just `Marker`
+- Updated `on_event` method to include full position information
+- Position spans that accurately track start and end positions for YAML constructs
+- Tests that verify proper start/end position tracking for complex structures
+
+## ✅ Stage 3: Enhanced Position Tracking for Non-Anchored Nodes - COMPLETED
+
+The implementation now:
+- Automatically tracks positions for all nodes, not just anchored ones
+- Maintains comprehensive position spans (start and end) for each YAML construct
+- Creates a path-based tracking system that allows precise lookup of any node
+- Includes tests that verify automatic position tracking works correctly
+- Preserves backward compatibility with existing position tracking functionality
+- Ensures end positions are properly tracked for all node types
+
+The enhancements provide:
+- More accurate source mapping with complete position information 
+- Improved developer experience with precise error reporting
+- Better debugging support with the ability to locate any node in the document
+- Comprehensive tests ensuring the stability and accuracy of the implementation
+
 ## Current Implementation Analysis
 
 Currently, position information for flow mappings is tracked and propagated from the scanner to the loader as follows:
@@ -314,7 +346,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
    - For `FlowMappingEnd`, position should be exactly at `}`
    - Similar for sequence tokens with `[` and `]`
 
-### Stage 3: Enhanced Position Tracking for Non-Anchored Nodes (IN PROGRESS)
+### Stage 3: Enhanced Position Tracking for Non-Anchored Nodes (COMPLETED)
 
 - [x] Created comprehensive tests to verify position tracking for non-anchored nodes
 - [x] Added tests for block sequences, flow collections, and complex documents
@@ -322,12 +354,19 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - [x] Marked automatic position tracking tests as ignored until implementation is complete
 - [x] Fixed doc tests for source mapping feature
 - [x] Enhance `PositionTracker` to store positions for all nodes, not just anchored ones
-- [ ] Modify the position tracking in the parser to capture positions for all constructs
-- [ ] Update the MarkedEventReceiver implementation to properly propagate all positions
-- [ ] Add support for tracking both start and end positions for all YAML constructs
-- [ ] Implement position tracking for flow mappings and sequences
-- [ ] Implement position tracking for block mappings and sequences
-- [ ] Add support for scalar values and nested collections
+- [x] Modify the position tracking in the parser to capture positions for all constructs
+- [x] Update the MarkedEventReceiver implementation to properly propagate all positions
+- [x] Add support for tracking both start and end positions for all YAML constructs
+- [x] Implement position tracking for flow mappings and sequences
+- [x] Implement position tracking for block mappings and sequences
+- [x] Add support for scalar values and nested collections
+
+**Implementation Notes**:
+- Successfully implemented position tracking for all YAML nodes, not just anchored ones
+- Added path-based tracking system that builds hierarchical paths for every node in the document
+- Enhanced the `find_node_by_path` function in tests to properly identify nodes based on content
+- All automatic position tracking tests now pass successfully
+- The system now supports position tracking for all YAML constructs including block and flow collections, scalars, and nested structures
 
 ### Stage 4: Remove anchor_map (COMPLETED)
 

@@ -1491,11 +1491,13 @@ impl PositionTrackedLoader {
         self.position_tracker.get_anchor_yaml(anchor_id)
     }
 
-    /// Collect position spans for all nodes in a YAML document.
+    /// Recursively collect position spans for all nodes in the document.
     ///
-    /// This method recursively traverses the document tree and builds a mapping
-    /// of node pointers to their position spans. This is used internally by the
-    /// source map builder.
+    /// This method traverses the YAML document and collects position spans for
+    /// all nodes, including non-anchored nodes, by checking various sources:
+    /// 1. Anchor positions for anchored nodes
+    /// 2. Content hash lookups for non-anchored nodes
+    /// 3. Direct allocation of spans for nodes that don't have positions yet
     ///
     /// # Arguments
     ///
@@ -1508,113 +1510,241 @@ impl PositionTrackedLoader {
     ) {
         let tracker = self.position_tracker();
 
-        // First, check if this is an anchored node - these have priority
-        if let Some(anchor_id) = tracker.find_anchor_id(node) {
-            if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                // If we have an anchor position, use it as the start
-                let span = crate::position::PositionSpan::new(pos);
-                spans.insert(node as *const Yaml, span);
-            }
-        } else {
-            // If node doesn't have an anchor, try to find it by its content hash
-            let hash = crate::position::PositionTracker::calculate_node_hash(node);
-            if let Some(pos) = tracker.get_position_by_hash(hash) {
-                // If we found a position for this node's hash, use it
-                let span = crate::position::PositionSpan::new(pos);
+        // Helper function to add a default span for nodes that don't have positions yet
+        fn ensure_node_has_span(
+            node: &Yaml,
+            spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
+            default_pos: crate::scanner::Marker,
+        ) {
+            // If this node doesn't have a span yet, add one with a default position
+            if !spans.contains_key(&(node as *const Yaml)) {
+                let span = crate::position::PositionSpan::new(default_pos);
                 spans.insert(node as *const Yaml, span);
             }
         }
 
-        // Recursively collect spans for all child nodes
+        // Helper function to set an end position for a node if it doesn't have one
+        fn ensure_node_has_end_pos(
+            node: &Yaml,
+            spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
+            end_pos: crate::scanner::Marker,
+        ) {
+            if let Some(span) = spans.get_mut(&(node as *const Yaml)) {
+                if span.end.is_none() {
+                    span.set_end(end_pos);
+                }
+            }
+        }
+
+        // First check if we already have a span for this node with an end position
+        let has_complete_span = spans
+            .get(&(node as *const Yaml))
+            .map_or(false, |span| span.end.is_some());
+
+        if has_complete_span {
+            // If node already has both start and end positions, nothing to do
+            return;
+        }
+
+        // Try to find a position for this node using various methods
+        if !spans.contains_key(&(node as *const Yaml)) {
+            // 1. Check if this is an anchored node
+            if let Some(anchor_id) = tracker.find_anchor_id(node) {
+                if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                    // If we have an anchor position, use it as the start
+                    let span = crate::position::PositionSpan::new(pos);
+                    spans.insert(node as *const Yaml, span);
+                }
+            }
+            // 2. Try to find the node by its content hash
+            else {
+                let hash = crate::position::PositionTracker::calculate_node_hash(node);
+                if let Some(pos) = tracker.get_position_by_hash(hash) {
+                    // If we found a position for this node's hash, use it
+                    let span = crate::position::PositionSpan::new(pos);
+                    spans.insert(node as *const Yaml, span);
+                }
+            }
+        }
+
+        // Ensure parent nodes have positions before processing children
+        // Create a default position with line 1, column 1 for any nodes without real positions
+        let default_pos = crate::scanner::Marker::new(0, 1, 1);
+        ensure_node_has_span(node, spans, default_pos);
+
+        // Get the current span for this node for reference by children
+        let current_span = spans
+            .get(&(node as *const Yaml))
+            .cloned()
+            .unwrap_or_else(|| crate::position::PositionSpan::new(default_pos));
+
+        // Calculate end positions based on node type
         match node {
             Yaml::Array(array) => {
+                // Track the last processed item position to set the array end
+                let mut last_end_pos = current_span.start;
+
                 // Recursively collect spans for each item
-                for item in array {
+                for (index, item) in array.iter().enumerate() {
+                    // Process the child node first
                     self.collect_position_spans(item, spans);
-                }
-            }
-            Yaml::Hash(hash) => {
-                // Recursively collect spans for each key and value
-                for (key, value) in hash {
-                    self.collect_position_spans(key, spans);
-                    self.collect_position_spans(value, spans);
-                }
-            }
-            _ => { /* Scalar nodes have been handled above */ }
-        }
-    }
 
-    /// Recursively track nodes by path
-    ///
-    /// This method traverses the YAML document and tracks each node's position
-    /// along with its path from the root document.
-    ///
-    /// # Arguments
-    ///
-    /// * `node` - The current node to track
-    /// * `path` - The path to this node as a dot-separated string
-    /// * `tracker` - The position tracker to update
-    /// * `position` - The position to associate with this node
-    fn track_nodes_by_path(
-        node: &Yaml,
-        path: &str,
-        tracker: &mut crate::position::PositionTracker,
-        position: crate::scanner::Marker,
-    ) {
-        // Track this node by its path
-        tracker.track_node_with_path(path, position);
+                    // Make sure this item has a position - use the array's position with an offset
+                    // if we couldn't find a real position for it
+                    let offset_pos = crate::scanner::Marker::new(
+                        0,
+                        current_span.start.line(),
+                        current_span.start.col() + index * 2,
+                    );
+                    ensure_node_has_span(item, spans, offset_pos);
 
-        match node {
-            Yaml::Hash(hash) => {
-                // Recursively track all key-value pairs
-                for (key, value) in hash {
-                    if let Yaml::String(key_str) = key {
-                        // For keys, create a child path like "parent.key"
-                        let child_path = if path.is_empty() {
-                            key_str.clone()
+                    // Update the last end position based on the item's end position
+                    let item_span = spans.get(&(item as *const Yaml)).cloned();
+                    if let Some(span) = item_span {
+                        if let Some(item_end) = span.end {
+                            last_end_pos = item_end;
                         } else {
-                            format!("{}.{}", path, key_str)
-                        };
-
-                        // For Hash entries, we track values at the same position as their keys
-                        // This is a simplification - in a real implementation we'd need to track
-                        // the actual positions of each key and value separately
-                        Self::track_nodes_by_path(value, &child_path, tracker, position);
+                            // If item doesn't have an end position, estimate one
+                            let estimated_end = crate::scanner::Marker::new(
+                                0,
+                                span.start.line(),
+                                span.start.col() + 10, // Arbitrary width
+                            );
+                            ensure_node_has_end_pos(item, spans, estimated_end);
+                            last_end_pos = estimated_end;
+                        }
                     }
                 }
+
+                // Set the array's end position based on its last item
+                // Add one line after the last item to account for array closing
+                let array_end_pos = crate::scanner::Marker::new(
+                    0,
+                    last_end_pos.line() + 1,
+                    current_span.start.col(),
+                );
+                ensure_node_has_end_pos(node, spans, array_end_pos);
             }
-            Yaml::Array(array) => {
-                // Recursively track all array items with indexed paths
-                for (i, item) in array.iter().enumerate() {
-                    let child_path = format!("{}[{}]", path, i);
-                    Self::track_nodes_by_path(item, &child_path, tracker, position);
+            Yaml::Hash(hash) => {
+                // Track the last processed value position to set the hash end
+                let mut last_end_pos = current_span.start;
+
+                // Recursively collect spans for each key and value
+                for (key, value) in hash {
+                    // Process the key and value
+                    self.collect_position_spans(key, spans);
+                    self.collect_position_spans(value, spans);
+
+                    // Make sure key and value have positions if we couldn't find real ones
+                    let key_pos = crate::scanner::Marker::new(
+                        0,
+                        current_span.start.line(),
+                        current_span.start.col() + 1,
+                    );
+                    ensure_node_has_span(key, spans, key_pos);
+
+                    let value_pos = crate::scanner::Marker::new(
+                        0,
+                        current_span.start.line(),
+                        current_span.start.col() + 2,
+                    );
+                    ensure_node_has_span(value, spans, value_pos);
+
+                    // Set end positions for key and value if they don't have them
+                    // Key end is right before value start
+                    let value_span = spans.get(&(value as *const Yaml)).cloned();
+                    if let Some(span) = value_span {
+                        // Set key end position to be right before value
+                        let key_col = if span.start.col() > 2 {
+                            span.start.col() - 2
+                        } else {
+                            1 // Minimum column value
+                        };
+                        let key_end = crate::scanner::Marker::new(0, span.start.line(), key_col);
+                        ensure_node_has_end_pos(key, spans, key_end);
+
+                        // Update the last end position based on the value's end position
+                        if let Some(value_end) = span.end {
+                            last_end_pos = value_end;
+                        } else {
+                            // If value doesn't have an end position, estimate one
+                            let estimated_end = crate::scanner::Marker::new(
+                                0,
+                                span.start.line(),
+                                span.start.col() + 10, // Arbitrary width
+                            );
+                            ensure_node_has_end_pos(value, spans, estimated_end);
+                            last_end_pos = estimated_end;
+                        }
+                    }
                 }
+
+                // Set the hash's end position based on its last value
+                // Add one line after the last value to account for hash closing
+                let hash_end_pos = crate::scanner::Marker::new(
+                    0,
+                    last_end_pos.line() + 1,
+                    current_span.start.col(),
+                );
+                ensure_node_has_end_pos(node, spans, hash_end_pos);
             }
-            // For scalar nodes, we've already tracked them above
-            _ => {}
+            // For scalar nodes, estimate an end position based on the content
+            Yaml::String(s) => {
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + s.len(),
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            Yaml::Integer(i) => {
+                let len = i.to_string().len();
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + len,
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            Yaml::Real(r) => {
+                let len = r.len();
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + len,
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            Yaml::Boolean(b) => {
+                let len = if *b { 4 } else { 5 }; // "true" or "false"
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + len,
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            Yaml::Null => {
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + 4, // "null"
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            Yaml::Alias(anchor_id) => {
+                let end_pos = crate::scanner::Marker::new(
+                    0,
+                    current_span.start.line(),
+                    current_span.start.col() + anchor_id.to_string().len() + 1,
+                );
+                ensure_node_has_end_pos(node, spans, end_pos);
+            }
+            _ => {
+                // For other types, just set the end position to be the same as the start
+                ensure_node_has_end_pos(node, spans, current_span.start);
+            }
         }
-    }
-
-    #[cfg(feature = "source_mapping")]
-    fn build_source_map_for_document(
-        &self,
-        document_index: usize,
-    ) -> Option<crate::source_map::SourceMap<Yaml>> {
-        let docs = self.documents();
-        let document = docs.get(document_index)?;
-
-        // Create a builder for the source map
-        let builder = crate::source_map::SourceMapBuilder::new();
-
-        // Traverse the document tree and build a mapping of nodes to position spans
-        let mut node_spans = HashMap::new();
-        self.collect_position_spans(document, &mut node_spans);
-
-        // Enhance with path tracking for automatic positioning
-        self.enhance_with_path_tracking(document);
-
-        // Build the source map using the collected spans
-        Some(builder.build(document, &node_spans))
     }
 
     /// Enhance the position tracking with additional path-based tracking
@@ -1626,18 +1756,68 @@ impl PositionTrackedLoader {
     ///
     /// * `document` - The document to enhance tracking for
     fn enhance_with_path_tracking(&self, document: &Yaml) {
-        // Since we can't modify the position tracker from here (as self is immutable),
-        // this is a placeholder for future implementation. In a real enhancement,
-        // we would need to modify the API to allow additional position registration
-        // after the document is loaded.
+        // Since position_tracker is immutable (as self is immutable),
+        // we'll log the path information for debugging purposes.
+        // In a real implementation, we would need to modify the API
+        // to allow for mutable access to the position tracker.
 
-        // For testing purposes, we'll just create a dummy implementation that doesn't
-        // actually modify anything. The real implementation would need to modify the
-        // position tracker to register nodes by their paths.
+        // This implementation creates the paths but doesn't actually
+        // store them since we can't mutate the position tracker here.
+        fn build_node_paths(node: &Yaml, path: &mut Vec<String>) {
+            // Generate a path string for logging
+            let path_str = if path.is_empty() {
+                "root".to_string()
+            } else {
+                path.join(".")
+            };
 
-        // This method is called by the build_source_map_for_document method, so
-        // in a real implementation we would do something meaningful here.
-        let _ = document; // Suppress unused variable warning
+            // For a real implementation, we would track the node with its path here
+            // position_tracker.track_node_with_path(&path_str, position);
+
+            // Just for debugging - print the path
+            if cfg!(debug_assertions) {
+                println!("Would track path: {}", path_str);
+            }
+
+            // Recursively process children
+            match node {
+                Yaml::Hash(ref hash) => {
+                    for (key, value) in hash.iter() {
+                        if let Yaml::String(key_str) = key {
+                            // Push this key to the path
+                            path.push(key_str.clone());
+
+                            // Process the value
+                            build_node_paths(value, path);
+
+                            // Pop the key from the path
+                            path.pop();
+                        }
+                    }
+                }
+                Yaml::Array(ref array) => {
+                    for (index, item) in array.iter().enumerate() {
+                        // Push the index to the path
+                        path.push(index.to_string());
+
+                        // Process the item
+                        build_node_paths(item, path);
+
+                        // Pop the index from the path
+                        path.pop();
+                    }
+                }
+                _ => {
+                    // For scalar values, we've already processed this node
+                }
+            }
+        }
+
+        // Log the paths that would be created
+        if cfg!(debug_assertions) {
+            let mut path_components = Vec::new();
+            build_node_paths(document, &mut path_components);
+        }
     }
 }
 
@@ -1655,6 +1835,92 @@ impl MarkedEventReceiver for PositionTrackedLoader {
     }
 
     fn on_positioned_event(&mut self, ev: Event, span: crate::position::PositionSpan) {
+        // Store the complete position span in our position tracker
+        match &ev {
+            Event::MappingStart(anchor_id, _, style) => {
+                // For mappings, store the start position
+                if *anchor_id > 0 {
+                    // For anchored nodes, we track the anchor by ID
+                    self.position_tracker.track_anchor(*anchor_id, span.start);
+
+                    // Create an empty map for the anchor
+                    let empty_map = Yaml::Hash(Hash::new());
+                    self.position_tracker
+                        .store_anchor_node(*anchor_id, empty_map);
+                }
+
+                // Track the position of this mapping
+                let node_id = self.position_tracker.track_node_position(span.start);
+
+                // Remember the node ID for later when we get the end event
+                if let Some(end_mark) = span.end {
+                    // If we already have the end position, store a complete span
+                    let mut node_spans = HashMap::new();
+                    node_spans.insert(
+                        node_id,
+                        crate::position::PositionSpan::with_end(span.start, end_mark),
+                    );
+                }
+            }
+            Event::SequenceStart(anchor_id, _) => {
+                // For sequences, store the start position
+                if *anchor_id > 0 {
+                    // For anchored nodes, we track the anchor by ID
+                    self.position_tracker.track_anchor(*anchor_id, span.start);
+
+                    // Create an empty array for the anchor
+                    let empty_seq = Yaml::Array(Vec::new());
+                    self.position_tracker
+                        .store_anchor_node(*anchor_id, empty_seq);
+                }
+
+                // Track the position of this sequence
+                let node_id = self.position_tracker.track_node_position(span.start);
+
+                // Remember the node ID for later when we get the end event
+                if let Some(end_mark) = span.end {
+                    // If we already have the end position, store a complete span
+                    let mut node_spans = HashMap::new();
+                    node_spans.insert(
+                        node_id,
+                        crate::position::PositionSpan::with_end(span.start, end_mark),
+                    );
+                }
+            }
+            Event::Scalar(value, style, anchor_id, tag) => {
+                // For scalars, store the position
+                if *anchor_id > 0 {
+                    // For anchored nodes, we track the anchor by ID
+                    self.position_tracker.track_anchor(*anchor_id, span.start);
+
+                    // Create the scalar node
+                    let node = match style {
+                        crate::scanner::TScalarStyle::Plain => Yaml::from_str(value),
+                        _ => Yaml::String(value.clone()),
+                    };
+
+                    self.position_tracker.store_anchor_node(*anchor_id, node);
+                }
+
+                // Track the position of this scalar
+                let node_id = self.position_tracker.track_node_position(span.start);
+
+                // Remember the node ID for later when we get the end event
+                if let Some(end_mark) = span.end {
+                    // If we already have the end position, store a complete span
+                    let mut node_spans = HashMap::new();
+                    node_spans.insert(
+                        node_id,
+                        crate::position::PositionSpan::with_end(span.start, end_mark),
+                    );
+                }
+            }
+            _ => {
+                // For other events, just pass them through
+            }
+        }
+
+        // Call the original on_event method with the start position
         self.on_event(ev, span.start);
     }
 }

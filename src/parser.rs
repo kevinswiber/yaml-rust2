@@ -382,6 +382,9 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             // clear anchors before a new document
             self.anchors.clear();
+            if !self.keep_tags {
+                self.tags.clear();
+            }
             self.load_document_with_positions(ev, mark, recv)?;
             if !multi {
                 break;
@@ -436,7 +439,9 @@ impl<T: Iterator<Item = char>> Parser<T> {
 
         // DOCUMENT-END is expected.
         let (ev, mark) = self.next_token()?;
-        assert_eq!(ev, Event::DocumentEnd);
+        if ev != Event::DocumentEnd {
+            return Err(ScanError::new(mark, "did not find expected <document-end>"));
+        }
         // Use position tracking for the event
         let span = self.get_position_span(&ev, mark);
         recv.on_positioned_event(ev, span);
@@ -525,23 +530,22 @@ impl<T: Iterator<Item = char>> Parser<T> {
         &mut self,
         recv: &mut R,
     ) -> Result<(), ScanError> {
-        let (mut key_ev, mut key_mark) = self.next_token()?;
-        while key_ev != Event::MappingEnd {
-            // key
-            self.load_node_with_positions(key_ev, key_mark, recv)?;
-
-            // value
+        loop {
             let (ev, mark) = self.next_token()?;
-            self.load_node_with_positions(ev, mark, recv)?;
-
-            // next event
-            let (ev, mark) = self.next_token()?;
-            key_ev = ev;
-            key_mark = mark;
+            match ev {
+                Event::MappingEnd => {
+                    // Use position tracking for the event
+                    let span = self.get_position_span(&ev, mark);
+                    recv.on_positioned_event(ev, span);
+                    break;
+                }
+                _ => {
+                    self.load_node_with_positions(ev, mark, recv)?;
+                    let (ev, mark) = self.next_token()?;
+                    self.load_node_with_positions(ev, mark, recv)?;
+                }
+            }
         }
-        // Use position tracking for the event
-        let span = self.get_position_span(&key_ev, key_mark);
-        recv.on_positioned_event(key_ev, span);
         Ok(())
     }
 
@@ -563,18 +567,18 @@ impl<T: Iterator<Item = char>> Parser<T> {
         &mut self,
         recv: &mut R,
     ) -> Result<(), ScanError> {
-        let (mut ev, mut mark) = self.next_token()?;
-        while ev != Event::SequenceEnd {
-            self.load_node_with_positions(ev, mark, recv)?;
-
-            // next event
-            let (next_ev, next_mark) = self.next_token()?;
-            ev = next_ev;
-            mark = next_mark;
+        loop {
+            let (ev, mark) = self.next_token()?;
+            match ev {
+                Event::SequenceEnd => {
+                    // Use position tracking for the event
+                    let span = self.get_position_span(&ev, mark);
+                    recv.on_positioned_event(ev, span);
+                    break;
+                }
+                _ => self.load_node_with_positions(ev, mark, recv)?,
+            }
         }
-        // Use position tracking for the event
-        let span = self.get_position_span(&ev, mark);
-        recv.on_positioned_event(ev, span);
         Ok(())
     }
 
@@ -1219,17 +1223,125 @@ impl<T: Iterator<Item = char>> Parser<T> {
         event: &Event,
         mark: Marker,
     ) -> crate::position::PositionSpan {
-        // When we have a scalar with an anchor, store the node in our position tracker
-        // This will allow us to resolve aliases later without using the anchor_map
-        if let Event::Scalar(value, _style, anchor_id, _tag) = event {
-            if *anchor_id > 0 {
-                // Clone the scalar to create a Yaml node for tracking
-                let node = crate::yaml::Yaml::String(value.clone());
-                self.position_tracker.store_anchor_node(*anchor_id, node);
-            }
-        }
+        // Track different types of events with their positions
+        match event {
+            // Mapping events
+            Event::MappingStart(anchor_id, _, style) => {
+                // Create a position span for the mapping start
+                let span = crate::position::PositionSpan::new(mark);
 
-        self.position_tracker.process_event(event, mark)
+                // For both flow and block mappings, track the start position
+                self.position_tracker.push(0, mark); // 0 = mapping
+
+                // If this mapping has an anchor, track it
+                if *anchor_id > 0 {
+                    self.position_tracker.track_anchor(*anchor_id, mark);
+                    // Store an empty mapping node for the anchor
+                    let empty_map = crate::yaml::Yaml::Hash(crate::yaml::Hash::new());
+                    self.position_tracker
+                        .store_anchor_node(*anchor_id, empty_map);
+                }
+
+                span
+            }
+            Event::MappingEnd => {
+                // For mappings, pop the start position from the stack
+                if let Some((0, start_mark)) = self.position_tracker.pop() {
+                    // Return a span with both start and end positions
+                    crate::position::PositionSpan::with_end(start_mark, mark)
+                } else {
+                    // If no start position was found, just return the current position
+                    crate::position::PositionSpan::new(mark)
+                }
+            }
+
+            // Sequence events
+            Event::SequenceStart(anchor_id, _) => {
+                // Create a position span for the sequence start
+                let span = crate::position::PositionSpan::new(mark);
+
+                // For both flow and block sequences, track the start position
+                self.position_tracker.push(1, mark); // 1 = sequence
+
+                // If this sequence has an anchor, track it
+                if *anchor_id > 0 {
+                    self.position_tracker.track_anchor(*anchor_id, mark);
+                    // Store an empty sequence node for the anchor
+                    let empty_seq = crate::yaml::Yaml::Array(Vec::new());
+                    self.position_tracker
+                        .store_anchor_node(*anchor_id, empty_seq);
+                }
+
+                span
+            }
+            Event::SequenceEnd => {
+                // For sequences, pop the start position from the stack
+                if let Some((1, start_mark)) = self.position_tracker.pop() {
+                    // Return a span with both start and end positions
+                    crate::position::PositionSpan::with_end(start_mark, mark)
+                } else {
+                    // If no start position was found, just return the current position
+                    crate::position::PositionSpan::new(mark)
+                }
+            }
+
+            // Scalar and alias events
+            Event::Scalar(value, style, anchor_id, tag) => {
+                // Create a position span for the scalar
+                let span = crate::position::PositionSpan::new(mark);
+
+                // If this scalar has an anchor, track it
+                if *anchor_id > 0 {
+                    self.position_tracker.track_anchor(*anchor_id, mark);
+
+                    // Store the scalar node with the proper conversion
+                    let yaml_node = match style {
+                        crate::scanner::TScalarStyle::Plain => crate::yaml::Yaml::from_str(value),
+                        _ => crate::yaml::Yaml::String(value.clone()),
+                    };
+
+                    self.position_tracker
+                        .store_anchor_node(*anchor_id, yaml_node);
+                }
+
+                // Track all scalars regardless of anchor
+                let node_hash = crate::position::PositionTracker::calculate_node_hash(
+                    &crate::yaml::Yaml::String(value.clone()),
+                );
+                self.position_tracker.track_node_with_hash(node_hash, mark);
+
+                span
+            }
+            Event::Alias(anchor_id) => {
+                // Create a position span for the alias
+                let span = crate::position::PositionSpan::new(mark);
+
+                // Track the alias position
+                self.position_tracker.track_node_position(mark);
+
+                span
+            }
+
+            // Document events
+            Event::DocumentStart => {
+                // Create a position span for the document start
+                self.position_tracker.push(2, mark); // 2 = document
+                crate::position::PositionSpan::new(mark)
+            }
+            Event::DocumentEnd => {
+                // For documents, pop the start position from the stack
+                if let Some((2, start_mark)) = self.position_tracker.pop() {
+                    // Return a span with both start and end positions
+                    crate::position::PositionSpan::with_end(start_mark, mark)
+                } else {
+                    // If no start position was found, just return the current position
+                    crate::position::PositionSpan::new(mark)
+                }
+            }
+
+            // For all other events, just create a position span with the current mark
+            _ => crate::position::PositionSpan::new(mark),
+        }
     }
 
     /// Get the anchor names map

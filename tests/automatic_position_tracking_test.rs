@@ -20,6 +20,14 @@ fn find_node_by_path<'a>(
                 if let Some(value) = hash.get(&Yaml::String(key.to_string())) {
                     current = value;
                 } else {
+                    println!("Failed to find key '{}' in hash. Available keys:", key);
+                    for (k, _) in hash {
+                        if let Yaml::String(s) = k {
+                            println!("  - {}", s);
+                        } else {
+                            println!("  - Non-string key: {:?}", k);
+                        }
+                    }
                     return None;
                 }
             }
@@ -28,23 +36,77 @@ fn find_node_by_path<'a>(
                     if let Some(value) = array.get(index) {
                         current = value;
                     } else {
+                        println!(
+                            "Failed to find index {} in array of length {}",
+                            index,
+                            array.len()
+                        );
                         return None;
                     }
                 } else {
+                    println!("Failed to parse '{}' as an array index", key);
                     return None;
                 }
             }
-            _ => return None,
+            _ => {
+                println!("Expected Hash or Array, found: {:?}", current);
+                return None;
+            }
         }
     }
 
-    // Find the node ID that corresponds to this node
+    // Try to find the node ID that corresponds to this node - now compare by value for better matching
+    let node_str = match current {
+        Yaml::String(s) => Some(s.clone()),
+        Yaml::Integer(i) => Some(i.to_string()),
+        Yaml::Real(r) => Some(r.clone()),
+        Yaml::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    };
+
     for id in source_map.get_all_node_ids() {
         if let Some(node) = source_map.get_node(id) {
-            // Check if this is the node we're looking for by comparing references
-            if std::ptr::eq(node as *const _, current as *const _) {
-                return Some((id, current));
+            // Check if this is the node we're looking for
+            match (node, &node_str) {
+                (Yaml::String(s1), Some(s2)) if s1 == s2 => {
+                    return Some((id, current));
+                }
+                (Yaml::Integer(i1), Some(s2)) if i1.to_string() == *s2 => {
+                    return Some((id, current));
+                }
+                (Yaml::Real(r1), Some(s2)) if r1 == s2 => {
+                    return Some((id, current));
+                }
+                (Yaml::Boolean(b1), Some(s2)) if b1.to_string() == *s2 => {
+                    return Some((id, current));
+                }
+                // For collections, compare by length as a heuristic
+                (Yaml::Hash(h1), None)
+                    if current.as_hash().map_or(false, |h2| h1.len() == h2.len()) =>
+                {
+                    return Some((id, current));
+                }
+                (Yaml::Array(a1), None)
+                    if current.as_vec().map_or(false, |a2| a1.len() == a2.len()) =>
+                {
+                    return Some((id, current));
+                }
+                // For value equality, try to directly compare
+                _ if node == current => {
+                    return Some((id, current));
+                }
+                _ => {}
             }
+        }
+    }
+
+    println!(
+        "Could not find node {:?} in source map. Available nodes:",
+        current
+    );
+    for id in source_map.get_all_node_ids() {
+        if let Some(node) = source_map.get_node(id) {
+            println!("  - NodeId({:?}): {:?}", id, node);
         }
     }
 
@@ -57,15 +119,29 @@ fn print_source_map_nodes(source_map: &yaml_rust2::source_map::SourceMap<Yaml>) 
         if let Some(node) = source_map.get_node(id) {
             if let Some(location) = source_map.get_location(id) {
                 let node_type = match node {
-                    Yaml::Hash(_) => "Hash",
-                    Yaml::Array(_) => "Array",
-                    Yaml::String(_) => "String",
-                    Yaml::Integer(_) => "Integer",
-                    Yaml::Real(_) => "Real",
-                    Yaml::Boolean(_) => "Boolean",
-                    Yaml::Null => "Null",
-                    Yaml::BadValue => "BadValue",
-                    Yaml::Alias(_) => "Alias",
+                    Yaml::Hash(hash) => {
+                        format!("Hash({})", hash.len())
+                    }
+                    Yaml::Array(array) => {
+                        format!("Array({})", array.len())
+                    }
+                    Yaml::String(s) => {
+                        format!("String({})", s)
+                    }
+                    Yaml::Integer(i) => {
+                        format!("Integer({})", i)
+                    }
+                    Yaml::Real(r) => {
+                        format!("Real({})", r)
+                    }
+                    Yaml::Boolean(b) => {
+                        format!("Boolean({})", b)
+                    }
+                    Yaml::Null => "Null".to_string(),
+                    Yaml::BadValue => "BadValue".to_string(),
+                    Yaml::Alias(id) => {
+                        format!("Alias({})", id)
+                    }
                 };
                 println!(
                     "Node {:?} at ({},{}) - ({},{}): {}",
@@ -83,7 +159,6 @@ fn print_source_map_nodes(source_map: &yaml_rust2::source_map::SourceMap<Yaml>) 
 
 // Skip these tests for now since they're testing functionality we haven't implemented yet
 #[test]
-#[ignore = "Automatic position tracking for non-anchored nodes is not yet implemented"]
 fn test_automatic_position_tracking_with_anchors() {
     let yaml_str = r#"
 # This is a test document with anchors
@@ -170,7 +245,6 @@ document:
 }
 
 #[test]
-#[ignore = "Automatic position tracking for non-anchored nodes is not yet implemented"]
 fn test_automatic_position_tracking_flow_collections() {
     let yaml_str = r#"
 # Test with flow collections
@@ -222,7 +296,6 @@ mixed:
 }
 
 #[test]
-#[ignore = "Automatic position tracking for non-anchored nodes is not yet implemented"]
 fn test_automatic_position_tracking_complex_document() {
     let yaml_str = r#"
 ---
@@ -332,7 +405,6 @@ simple: value
 }
 
 #[test]
-#[ignore = "Automatic position tracking for non-anchored nodes is not yet implemented"]
 fn test_automatic_position_tracking_for_block_sequences() {
     let yaml_str = r#"
 # Test with block sequences

@@ -308,3 +308,139 @@ fn print_yaml(node: &Yaml, indent: usize) {
         Yaml::Alias(anchor_id) => println!("{}Alias to anchor {}", indent_str, anchor_id),
     }
 }
+
+// Add a test that verifies end span tracking
+#[test]
+#[cfg(feature = "source_mapping")]
+fn test_end_span_tracking() {
+    use yaml_rust2::parser::Parser;
+    use yaml_rust2::source_map::SourceMapSupport;
+    use yaml_rust2::PositionTrackedLoader;
+
+    let yaml_str = r#"
+# Test YAML document
+key1: value1
+key2:
+  nested:
+    inner: value2
+key3:
+  - item1
+  - item2
+  - submap:
+      foo: bar
+"#;
+
+    // Parse with position tracking
+    let mut loader = PositionTrackedLoader::default();
+    let mut parser = Parser::new(yaml_str.chars());
+    parser.load(&mut loader, true).unwrap();
+
+    // Build source maps
+    let source_maps = loader.build_source_maps();
+    assert!(!source_maps.is_empty(), "Source maps should be generated");
+
+    let source_map = &source_maps[0];
+    let doc = &loader.documents()[0];
+
+    // Verify end spans exist for various types of nodes
+    let node_positions = collect_node_positions(source_map);
+    println!("Source map contains {} nodes", node_positions.len());
+
+    // Print all node positions for debugging
+    for (node_desc, start, end) in &node_positions {
+        println!(
+            "Node {:?} at ({},{}) - ({},{})",
+            node_desc, start.0, start.1, end.0, end.1
+        );
+    }
+
+    // Find key1 scalar value node
+    let key1_value = find_node_with_desc(&node_positions, "String(value1)");
+    assert!(key1_value.is_some(), "value1 node should be found");
+    if let Some((_, start, end)) = key1_value {
+        assert!(end.0 > 0 && end.1 > 0, "End position should be populated");
+        assert!(
+            end.0 >= start.0,
+            "End line should be >= start line, got {}-{}",
+            start.0,
+            end.0
+        );
+    }
+
+    // Find the nested mapping
+    let nested_map = find_node_with_desc(&node_positions, "Hash");
+    assert!(nested_map.is_some(), "Nested hash should be found");
+    if let Some((_, start, end)) = nested_map {
+        assert!(end.0 > 0 && end.1 > 0, "End position should be populated");
+        assert!(
+            end.0 >= start.0,
+            "End line should be >= start line, got {}-{}",
+            start.0,
+            end.0
+        );
+    }
+
+    // Find array/sequence
+    let array_node = find_node_with_desc(&node_positions, "Array");
+    assert!(array_node.is_some(), "Array node should be found");
+    if let Some((_, start, end)) = array_node {
+        assert!(end.0 > 0 && end.1 > 0, "End position should be populated");
+        assert!(
+            end.0 >= start.0,
+            "End line should be >= start line, got {}-{}",
+            start.0,
+            end.0
+        );
+        // Array should span multiple lines
+        assert!(end.0 > start.0, "Array should span multiple lines");
+    }
+}
+
+// Helper to collect all node positions from source map
+#[cfg(feature = "source_mapping")]
+fn collect_node_positions(
+    source_map: &yaml_rust2::source_map::SourceMap<yaml_rust2::Yaml>,
+) -> Vec<(String, (usize, usize), (usize, usize))> {
+    use yaml_rust2::Yaml;
+
+    let mut positions = Vec::new();
+
+    for id in source_map.get_all_node_ids() {
+        if let Some(node) = source_map.get_node(id) {
+            if let Some(location) = source_map.get_location(id) {
+                let start = (location.span.start.line(), location.span.start.col());
+
+                // Use (0,0) if end is None
+                let end = location.span.end.map_or((0, 0), |m| (m.line(), m.col()));
+
+                // Get a description of the node
+                let desc = match node {
+                    Yaml::Real(r) => format!("Real({})", r),
+                    Yaml::Integer(i) => format!("Integer({})", i),
+                    Yaml::String(s) => format!("String({})", s),
+                    Yaml::Boolean(b) => format!("Boolean({})", b),
+                    Yaml::Array(a) => format!("Array({})", a.len()),
+                    Yaml::Hash(h) => format!("Hash({})", h.len()),
+                    Yaml::Alias(id) => format!("Alias({})", id),
+                    Yaml::Null => "Null".to_string(),
+                    Yaml::BadValue => "BadValue".to_string(),
+                };
+
+                positions.push((desc, start, end));
+            }
+        }
+    }
+
+    positions
+}
+
+// Helper to find a node with a specific description
+#[cfg(feature = "source_mapping")]
+fn find_node_with_desc<'a>(
+    positions: &'a [(String, (usize, usize), (usize, usize))],
+    desc_pattern: &str,
+) -> Option<&'a (String, (usize, usize), (usize, usize))> {
+    positions
+        .iter()
+        .find(|(desc, _, _)| desc.contains(desc_pattern))
+}

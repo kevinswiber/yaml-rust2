@@ -5,14 +5,11 @@
 //! This example demonstrates how to use the source mapping functionality
 //! in yaml-rust2. It shows two approaches:
 //!
-//! 1. Manual source map creation - the example manually registers nodes
-//!    with positions to create a source map for demonstration purposes.
-//!    This is the approach shown in this example as it's more reliable
-//!    and provides better control.
+//! 1. Automatic position tracking - using the enhanced position tracking system
+//!    that tracks positions for all nodes, not just anchored ones.
 //!
-//! 2. Automatic position tracking - the example tries to use the built-in
-//!    position tracking to build a source map, but the current implementation
-//!    only tracks positions for nodes with anchors or in flow collections.
+//! 2. Manual source map creation - manually registers nodes with positions
+//!    to create a source map for demonstration or special cases.
 //!
 //! Key features demonstrated:
 //! - Parsing YAML with position tracking
@@ -25,17 +22,23 @@ use std::collections::HashMap;
 use yaml_rust2::parser::Parser;
 use yaml_rust2::position::PositionSpan;
 use yaml_rust2::scanner::Marker;
-use yaml_rust2::source_map::SourceMapBuilder;
+use yaml_rust2::source_map::{SourceMap, SourceMapBuilder, SourceMapSupport};
 use yaml_rust2::{PositionTrackedLoader, Yaml};
 
 // The example main function
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== YAML Source Mapping Example ===\n");
 
-    // Example 1: Basic source mapping with position tracking
-    basic_source_mapping_example()?;
+    // Example 1: Automatic source mapping with position tracking
+    automatic_source_mapping_example()?;
 
-    // Example 2: Error reporting with source mapping
+    // Example 2: Non-anchored node position tracking
+    non_anchored_node_tracking_example()?;
+
+    // Example 3: Manual source mapping demonstration
+    manual_source_mapping_example()?;
+
+    // Example 4: Error reporting with source mapping
     error_reporting_example()?;
 
     Ok(())
@@ -55,8 +58,8 @@ fn marker(line: usize, col: usize) -> Marker {
     unsafe { std::mem::transmute(MarkerTest { index, line, col }) }
 }
 
-fn basic_source_mapping_example() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n=== Basic Source Mapping Example ===\n");
+fn automatic_source_mapping_example() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== Automatic Source Mapping Example ===\n");
 
     let yaml_str = r#"
 # A sample YAML document
@@ -92,6 +95,192 @@ document:
 
     // Debugging: print the document structure
     print_yaml_structure(&documents[0], 0);
+
+    // Build source maps automatically from the loader
+    println!("\nCreating automatic source map:");
+    let source_maps = loader.build_source_maps();
+    if source_maps.is_empty() {
+        println!("No source maps generated");
+        return Ok(());
+    }
+
+    let source_map = &source_maps[0];
+    println!("\nAutomatically generated source map information:");
+    print_source_map_info(source_map);
+
+    // Find a specific node by navigating the document
+    let doc = &documents[0];
+    let integer_node = &doc["document"]["basic_types"]["integer"];
+
+    // Find the node ID for the integer node
+    let mut integer_id = None;
+    for id in source_map.get_all_node_ids() {
+        if let Some(node) = source_map.get_node(id) {
+            if node == integer_node {
+                integer_id = Some(id);
+                break;
+            }
+        }
+    }
+
+    // Print information about the integer node
+    if let Some(id) = integer_id {
+        if let Some(location) = source_map.get_location(id) {
+            println!(
+                "\nInteger node found at position ({},{}): {:?}",
+                location.span.start.line(),
+                location.span.start.col(),
+                integer_node
+            );
+        }
+    } else {
+        println!("\nInteger node not found in source map");
+    }
+
+    // Look up node at specific position (using the integer node position)
+    if let Some(id) = integer_id {
+        if let Some(location) = source_map.get_location(id) {
+            let line = location.span.start.line();
+            let col = location.span.start.col();
+            println!("\nLooking up node at position {}:{}:", line, col);
+
+            if let Some(found_id) = source_map.find_node_at_position(line, col) {
+                if let Some(node) = source_map.get_node(found_id) {
+                    println!(
+                        "Found node at ({},{}): {:?}",
+                        line,
+                        col,
+                        node_type_name(node)
+                    );
+                }
+            } else {
+                println!("No node found at position {}:{}", line, col);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn non_anchored_node_tracking_example() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== Non-Anchored Node Tracking Example ===\n");
+
+    let yaml_str = r#"
+# This example demonstrates tracking non-anchored nodes
+config:
+  server:
+    host: localhost
+    port: 8080
+    debug: true
+  paths:
+    - /api/v1
+    - /api/v2
+    - /admin
+  options:
+    timeout: 30
+    retry: 3
+    settings:
+      cache: true
+      logging:
+        level: info
+"#;
+
+    // Parse the YAML with position tracking
+    let mut loader = PositionTrackedLoader::default();
+    let mut parser = Parser::new(yaml_str.chars());
+    parser.load(&mut loader, true)?;
+
+    // Get the document and build the source map
+    let documents = loader.documents();
+    println!("Parsed {} YAML documents", documents.len());
+
+    if documents.is_empty() {
+        println!("No documents found");
+        return Ok(());
+    }
+
+    let doc = &documents[0];
+    let source_maps = loader.build_source_maps();
+    let source_map = &source_maps[0];
+
+    // Print the document structure
+    println!("\nDocument structure:");
+    print_yaml_structure(doc, 0);
+
+    // Print the source map information
+    println!("\nSource map information for non-anchored nodes:");
+    print_source_map_info(source_map);
+
+    // Find specific non-anchored nodes
+    let paths = find_node_at_path(doc, &["config", "paths"]);
+    let host = find_node_at_path(doc, &["config", "server", "host"]);
+    let logging_level =
+        find_node_at_path(doc, &["config", "options", "settings", "logging", "level"]);
+
+    // Find their position information
+    println!("\nPosition information for non-anchored nodes:");
+    if let Some(paths_node) = paths {
+        print_node_position(source_map, paths_node, "paths");
+    }
+
+    if let Some(host_node) = host {
+        print_node_position(source_map, host_node, "host");
+    }
+
+    if let Some(level_node) = logging_level {
+        print_node_position(source_map, level_node, "logging level");
+    }
+
+    // Find a node at a specific position
+    if let Some(host_node) = host {
+        let host_id = find_node_id(source_map, host_node);
+        if let Some(id) = host_id {
+            if let Some(location) = source_map.get_location(id) {
+                let line = location.span.start.line();
+                let col = location.span.start.col();
+
+                println!("\nLooking up node at position {}:{}:", line, col);
+                if let Some(found_id) = source_map.find_node_at_position(line, col) {
+                    if let Some(node) = source_map.get_node(found_id) {
+                        println!("Found node at ({},{}): {:?}", line, col, node);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn manual_source_mapping_example() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== Manual Source Mapping Example ===\n");
+
+    let yaml_str = r#"
+# A sample YAML document
+document:
+  basic_types: &basic
+    string: This is a string
+    integer: &int_val 42
+    float: &float_val 3.14159
+  nested: &nested_items
+    - item1
+    - item2
+    - mapping: &map
+        key: value
+  ref_integer: *int_val
+  ref_float: *float_val
+"#;
+
+    // Parse the YAML with position tracking
+    let mut loader = PositionTrackedLoader::default();
+    let mut parser = Parser::new(yaml_str.chars());
+    parser.load(&mut loader, true)?;
+    let documents = loader.documents();
+
+    if documents.is_empty() {
+        println!("No documents found");
+        return Ok(());
+    }
 
     // For demonstration purposes, we'll manually create a source map
     println!("\nCreating manual source map for demonstration:");
@@ -195,96 +384,91 @@ fn error_reporting_example() -> Result<(), Box<dyn std::error::Error>> {
 
     let valid_yaml = r#"
 config:
-  database: &db
-    host: &host localhost
-    port: &port 3306
-    username: &user admin
+  database:
+    host: localhost
+    port: 3306
+    username: admin
     # Missing required field: password
 "#;
 
     // Parse the YAML with position tracking
     let mut loader = PositionTrackedLoader::default();
-
-    // Parse the YAML to capture position information
     let mut parser = Parser::new(valid_yaml.chars());
     parser.load(&mut loader, true)?;
 
+    // Build source maps automatically
+    let source_maps = loader.build_source_maps();
+    if source_maps.is_empty() {
+        println!("No source maps generated");
+        return Ok(());
+    }
+
+    let source_map = &source_maps[0];
+
     // Get access to the parsed YAML document
     let doc = &loader.documents()[0];
+    let db_node = &doc["config"]["database"];
 
-    // Manually create source map for the error example
-    let mut builder = SourceMapBuilder::new();
-
-    // Get references to important nodes
-    let config_node = &doc["config"];
-    let db_node = &config_node["database"];
-
-    // Register nodes with positions
-    let _root_id = builder.register_node(
-        doc.clone(),
-        PositionSpan::with_end(marker(1, 1), marker(8, 1)),
-    );
-
-    let _config_id = builder.register_node(
-        config_node.clone(),
-        PositionSpan::with_end(marker(2, 1), marker(7, 1)),
-    );
-
-    let db_id = builder.register_node(
-        db_node.clone(),
-        PositionSpan::with_end(marker(3, 3), marker(7, 1)),
-    );
-
-    // Build the source map
-    let source_map = builder.build_empty();
+    // Find the node ID for the database node
+    let mut db_id = None;
+    for id in source_map.get_all_node_ids() {
+        if let Some(node) = source_map.get_node(id) {
+            if node == db_node {
+                db_id = Some(id);
+                break;
+            }
+        }
+    }
 
     // Find the database configuration node
     println!("Looking for database configuration node:");
-    if let Some(location) = source_map.get_location(db_id) {
-        println!(
-            "Database node found at position ({},{})",
-            location.span.start.line(),
-            location.span.start.col()
-        );
+    if let Some(id) = db_id {
+        if let Some(location) = source_map.get_location(id) {
+            println!(
+                "Database node found at position ({},{})",
+                location.span.start.line(),
+                location.span.start.col()
+            );
 
-        // Simulate validation error for missing password
-        let mut validation_errors = HashMap::new();
-        validation_errors.insert(db_id, missing_password_error.to_string());
+            // Simulate validation error for missing password
+            let mut validation_errors = HashMap::new();
+            validation_errors.insert(id, missing_password_error.to_string());
 
-        // Format and display the error
-        println!("\nValidation errors:");
-        for (node_id, error_msg) in &validation_errors {
-            if let Some(location) = source_map.get_location(*node_id) {
-                // Format an error message with source context
-                let start_line = location.span.start.line();
-                let start_col = location.span.start.col();
+            // Format and display the error
+            println!("\nValidation errors:");
+            for (node_id, error_msg) in &validation_errors {
+                if let Some(location) = source_map.get_location(*node_id) {
+                    // Format an error message with source context
+                    let start_line = location.span.start.line();
+                    let start_col = location.span.start.col();
 
-                println!(
-                    "Error at line {}, column {}: {}",
-                    start_line, start_col, error_msg
-                );
+                    println!(
+                        "Error at line {}, column {}: {}",
+                        start_line, start_col, error_msg
+                    );
 
-                // Extract context from the source
-                let lines: Vec<&str> = valid_yaml.lines().collect();
-                let context_start = start_line.saturating_sub(1);
-                let context_end = (start_line + 1).min(lines.len());
+                    // Extract context from the source
+                    let lines: Vec<&str> = valid_yaml.lines().collect();
+                    let context_start = start_line.saturating_sub(1);
+                    let context_end = (start_line + 1).min(lines.len());
 
-                // Display context with a marker for the error location
-                println!("\nContext:");
-                for (i, line) in lines
-                    .iter()
-                    .enumerate()
-                    .skip(context_start)
-                    .take(context_end - context_start)
-                {
-                    println!("{:3} | {}", i + 1, line);
-                    if i + 1 == start_line {
-                        // Add a pointer to the error location
-                        println!(
-                            "    | {}{}",
-                            " ".repeat(start_col - 1),
-                            format!("^ {}", error_msg)
-                        );
+                    // Display context with a marker for the error location
+                    println!("\nContext:");
+                    for (i, line) in lines
+                        .iter()
+                        .enumerate()
+                        .skip(context_start)
+                        .take(context_end - context_start)
+                    {
+                        println!("{:3} | {}", i + 1, line);
+                        if i + 1 == start_line {
+                            // Add a pointer to the error location
+                            println!(
+                                "    | {}{}",
+                                " ".repeat(start_col - 1),
+                                format!("^ {}", error_msg)
+                            );
+                        }
                     }
                 }
             }
@@ -294,6 +478,143 @@ config:
     }
 
     Ok(())
+}
+
+// Helper function to print source map information
+fn print_source_map_info(source_map: &SourceMap<Yaml>) {
+    let node_ids = source_map.get_all_node_ids();
+    println!("Source map contains {} nodes", node_ids.len());
+
+    // Print some nodes for demonstration
+    println!("\nSample nodes from source map:");
+    let mut count = 0;
+    for id in node_ids {
+        if count >= 10 {
+            println!(
+                "... and {} more nodes",
+                source_map.get_all_node_ids().len() - 10
+            );
+            break;
+        }
+
+        if let Some(node) = source_map.get_node(id) {
+            if let Some(location) = source_map.get_location(id) {
+                println!(
+                    "Node at ({},{}) - ({},{}): {:?}",
+                    location.span.start.line(),
+                    location.span.start.col(),
+                    location.span.end.map_or(0, |m| m.line()),
+                    location.span.end.map_or(0, |m| m.col()),
+                    node_preview(node)
+                );
+                count += 1;
+            }
+        }
+    }
+}
+
+// Helper function to find a node at a specific path
+fn find_node_at_path<'a>(doc: &'a Yaml, path: &[&str]) -> Option<&'a Yaml> {
+    let mut current = doc;
+    for &key in path {
+        match current {
+            Yaml::Hash(hash) => {
+                if let Some(value) = hash.get(&Yaml::String(key.to_string())) {
+                    current = value;
+                } else {
+                    return None;
+                }
+            }
+            Yaml::Array(array) => {
+                if let Ok(index) = key.parse::<usize>() {
+                    if let Some(value) = array.get(index) {
+                        current = value;
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
+}
+
+// Helper function to find a node ID
+fn find_node_id(
+    source_map: &SourceMap<Yaml>,
+    node: &Yaml,
+) -> Option<yaml_rust2::source_map::NodeId> {
+    for id in source_map.get_all_node_ids() {
+        if let Some(map_node) = source_map.get_node(id) {
+            if equal_yaml_content(map_node, node) {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+// Helper function to check if two YAML nodes have the same content
+fn equal_yaml_content(a: &Yaml, b: &Yaml) -> bool {
+    match (a, b) {
+        (Yaml::String(a), Yaml::String(b)) => a == b,
+        (Yaml::Integer(a), Yaml::Integer(b)) => a == b,
+        (Yaml::Real(a), Yaml::Real(b)) => a == b,
+        (Yaml::Boolean(a), Yaml::Boolean(b)) => a == b,
+        (Yaml::Null, Yaml::Null) => true,
+        // For hash and array, we'd need to check each element
+        (Yaml::Hash(_), Yaml::Hash(_)) | (Yaml::Array(_), Yaml::Array(_)) => {
+            // For this example, check if references are equal
+            std::ptr::eq(a as *const _, b as *const _)
+        }
+        _ => false,
+    }
+}
+
+// Helper function to print position information for a node
+fn print_node_position(source_map: &SourceMap<Yaml>, node: &Yaml, name: &str) {
+    if let Some(node_id) = find_node_id(source_map, node) {
+        if let Some(location) = source_map.get_location(node_id) {
+            println!(
+                "{} node at ({},{}) - ({},{}): {:?}",
+                name,
+                location.span.start.line(),
+                location.span.start.col(),
+                location.span.end.map_or(0, |m| m.line()),
+                location.span.end.map_or(0, |m| m.col()),
+                node
+            );
+        } else {
+            println!("{} node found in map but has no location", name);
+        }
+    } else {
+        println!("{} node not found in source map", name);
+    }
+}
+
+// Helper function to get a preview of a YAML node
+fn node_preview(node: &Yaml) -> String {
+    match node {
+        Yaml::Real(r) => format!("Real({})", r),
+        Yaml::Integer(i) => format!("Integer({})", i),
+        Yaml::String(s) => {
+            let preview = if s.len() > 20 {
+                format!("{}...", &s[0..17])
+            } else {
+                s.clone()
+            };
+            format!("String({})", preview)
+        }
+        Yaml::Boolean(b) => format!("Boolean({})", b),
+        Yaml::Array(a) => format!("Array({})", a.len()),
+        Yaml::Hash(h) => format!("Hash({})", h.len()),
+        Yaml::Alias(id) => format!("Alias({})", id),
+        Yaml::Null => "Null".to_string(),
+        Yaml::BadValue => "BadValue".to_string(),
+    }
 }
 
 // Helper function to get the type name of a YAML node
