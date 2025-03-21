@@ -120,6 +120,107 @@ impl ScanError {
     pub fn info(&self) -> &str {
         self.info.as_ref()
     }
+
+    /// Format the error with source location information
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source text of the YAML document
+    ///
+    /// # Returns
+    ///
+    /// A formatted error message with location information and a pointer to the error position
+    #[must_use]
+    pub fn format_with_source(&self, source: &str) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+
+        // Get the line containing the error (adjust for 0-indexing)
+        let line_number = self.mark.line();
+        let line_idx = line_number.saturating_sub(1);
+
+        if line_idx >= lines.len() {
+            return format!("Error at line {}: {}", line_number, self.info);
+        }
+
+        let line_content = lines[line_idx];
+        let column = self.mark.col().saturating_sub(1); // Convert to 0-indexed
+
+        let mut result = format!(
+            "Error at {}:{}: {}\n",
+            line_number,
+            self.mark.col(),
+            self.info
+        );
+        result.push_str(&format!("{}: {}\n", line_number, line_content));
+
+        if column <= line_content.len() {
+            let padding = " ".repeat(line_number.to_string().len() + 2 + column);
+            result.push_str(&format!("{}^\n", padding));
+        }
+
+        result
+    }
+
+    /// Format the error with context lines
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source text of the YAML document
+    /// * `context_lines` - Number of lines to show before and after the error line
+    ///
+    /// # Returns
+    ///
+    /// A formatted error message with location information and surrounding context
+    #[must_use]
+    pub fn format_with_context(&self, source: &str, context_lines: usize) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+
+        // Get the line containing the error (adjust for 0-indexing)
+        let line_number = self.mark.line();
+        let line_idx = line_number.saturating_sub(1);
+
+        if line_idx >= lines.len() {
+            return format!("Error at line {}: {}", line_number, self.info);
+        }
+
+        // Calculate the range of lines to show
+        let start_line = line_number.saturating_sub(context_lines);
+        let end_line = line_number.saturating_add(context_lines).min(lines.len());
+
+        let mut result = format!(
+            "Error at {}:{}: {}\n\n",
+            line_number,
+            self.mark.col(),
+            self.info
+        );
+
+        // Add line numbers and content for context
+        for i in start_line..=end_line {
+            let idx = i.saturating_sub(1);
+            if idx < lines.len() {
+                let line_content = lines[idx];
+
+                // Highlight the error line
+                if i == line_number {
+                    result.push_str(&format!("> {}: {}\n", i, line_content));
+
+                    // Add caret pointer
+                    let column = self.mark.col().saturating_sub(1);
+                    if column <= line_content.len() {
+                        let padding = "  ".to_string()
+                            + &" ".repeat(i.to_string().len())
+                            + "  "
+                            + &" ".repeat(column);
+                        result.push_str(&format!("{}^\n", padding));
+                    }
+                } else {
+                    result.push_str(&format!("  {}: {}\n", i, line_content));
+                }
+            }
+        }
+
+        result
+    }
 }
 
 impl Error for ScanError {

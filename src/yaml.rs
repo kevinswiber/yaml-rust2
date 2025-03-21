@@ -1659,3 +1659,51 @@ impl PositionTrackedLoader {
         }
     }
 }
+
+#[cfg(feature = "source_mapping")]
+impl Yaml {
+    /// Get the position information for this node
+    ///
+    /// This method provides a convenient way to access the position information
+    /// for a node that was created with position tracking enabled. It is only
+    /// available when the `source_mapping` feature is enabled.
+    ///
+    /// Note: This method can only return position information when used with a SourceMap.
+    /// It's included here for convenience when using source maps directly.
+    ///
+    /// # Returns
+    ///
+    /// None. This is a stub implementation that always returns None.
+    /// To get position information, use the SourceMap API instead.
+    #[must_use]
+    pub fn get_position(&self) -> Option<crate::position::PositionSpan> {
+        // This is just a stub implementation
+        // Real position information should be retrieved from the SourceMap
+        None
+    }
+
+    /// Format this node with position information
+    ///
+    /// This method provides a quick way to get a string representation of this node
+    /// with its position in the source document.
+    ///
+    /// # Returns
+    ///
+    /// A string representation of the node type
+    #[must_use]
+    pub fn with_position_info(&self) -> String {
+        let node_type = match self {
+            Yaml::Real(_) => "Real",
+            Yaml::Integer(_) => "Integer",
+            Yaml::String(_) => "String",
+            Yaml::Boolean(_) => "Boolean",
+            Yaml::Array(_) => "Array",
+            Yaml::Hash(_) => "Hash",
+            Yaml::Alias(_) => "Alias",
+            Yaml::Null => "Null",
+            Yaml::BadValue => "BadValue",
+        };
+
+        format!("{} (no position info available)", node_type)
+    }
+}

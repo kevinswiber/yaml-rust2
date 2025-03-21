@@ -6,6 +6,7 @@
 //! documents.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -19,7 +20,7 @@ use crate::yaml::Yaml;
 /// This is used to create a stable reference to a node that can be used
 /// for mapping between the node and its source position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(usize);
+pub struct NodeId(pub(crate) usize);
 
 impl NodeId {
     /// Create a new node ID with the given index.
@@ -154,6 +155,76 @@ impl SourceLocation {
         } else {
             false
         }
+    }
+
+    /// Format a location indicator string that highlights the source location
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source text of the YAML document
+    /// * `with_caret` - Whether to include a caret pointer at the error location
+    ///
+    /// # Returns
+    ///
+    /// A formatted string that shows the location in the source with:
+    /// - The line containing the error
+    /// - An optional caret pointing to the exact position
+    /// - Line numbers for context
+    #[must_use]
+    pub fn format_location_indicator(&self, source: &str, with_caret: bool) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+
+        // Get the line containing the error (adjust for 0-indexing)
+        let line_number = self.start_line();
+        let line_idx = line_number.saturating_sub(1);
+
+        if line_idx >= lines.len() {
+            return format!("<location out of range: line {}>", line_number);
+        }
+
+        let line_content = lines[line_idx];
+        let column = self.start_column().saturating_sub(1); // Convert to 0-indexed
+
+        let mut result = format!("{}: {}\n", line_number, line_content);
+
+        if with_caret && column <= line_content.len() {
+            let padding = " ".repeat(line_number.to_string().len() + 2 + column);
+            result.push_str(&format!("{}^\n", padding));
+        }
+
+        result
+    }
+
+    /// Format an error message including the source code context for this location
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The error message to display
+    /// * `source` - The source text of the YAML document
+    ///
+    /// # Returns
+    ///
+    /// A formatted error message that includes the original message, location,
+    /// and relevant code snippet with a pointer
+    #[must_use]
+    pub fn format_error(&self, message: &str, source: &str) -> String {
+        let location_str = format!("{}:{}", self.start_line(), self.start_column());
+        let location_indicator = self.format_location_indicator(source, true);
+
+        format!(
+            "Error at {}: {}\n{}",
+            location_str, message, location_indicator
+        )
+    }
+}
+
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.start_line(), self.start_column())?;
+        if let (Some(end_line), Some(end_column)) = (self.end_line(), self.end_column()) {
+            write!(f, "-{}:{}", end_line, end_column)?;
+        }
+        Ok(())
     }
 }
 
@@ -408,6 +479,196 @@ where
         self.id_to_location.clear();
         self.id_to_node.clear();
         self.next_id = 1;
+    }
+
+    /// Find all nodes that fall within a given position range.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_line` - The starting line number (1-based)
+    /// * `start_column` - The starting column number (1-based)
+    /// * `end_line` - The ending line number (1-based)
+    /// * `end_column` - The ending column number (1-based)
+    ///
+    /// # Returns
+    ///
+    /// A vector of node IDs that fall within the specified range.
+    #[must_use]
+    pub fn find_nodes_in_range(
+        &self,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+    ) -> Vec<NodeId> {
+        self.id_to_location
+            .iter()
+            .filter_map(|(&id, location)| {
+                // Check if the location overlaps with the specified range
+                let loc_start_line = location.start_line();
+                let loc_start_column = location.start_column();
+                let loc_end_line = location.end_line().unwrap_or(loc_start_line);
+                let loc_end_column = location.end_column().unwrap_or(loc_start_column);
+
+                // Location overlaps with range if:
+                // 1. Location's end is after or at the range start
+                // 2. Location's start is before or at the range end
+                let location_ends_after_range_start = (loc_end_line > start_line)
+                    || (loc_end_line == start_line && loc_end_column >= start_column);
+
+                let location_starts_before_range_end = (loc_start_line < end_line)
+                    || (loc_start_line == end_line && loc_start_column <= end_column);
+
+                if location_ends_after_range_start && location_starts_before_range_end {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Find the deepest (most specific) node at a given position.
+    ///
+    /// This is similar to `find_node_at_position`, but explicitly looks for
+    /// the smallest, most specific node that contains the position. This is
+    /// useful for finding the most precise node when multiple nodes overlap.
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - The line number (1-based)
+    /// * `column` - The column number (1-based)
+    ///
+    /// # Returns
+    ///
+    /// The ID of the deepest node that contains the position, or `None` if not found.
+    #[must_use]
+    pub fn find_deepest_node_at_position(&self, line: usize, column: usize) -> Option<NodeId> {
+        // Find all nodes that contain the position
+        let matching_ids: Vec<NodeId> = self
+            .id_to_location
+            .iter()
+            .filter_map(|(&id, loc)| {
+                if loc.contains_position(line, column) {
+                    Some((id, loc))
+                } else {
+                    None
+                }
+            })
+            .map(|(id, _)| id)
+            .collect();
+
+        if matching_ids.is_empty() {
+            return None;
+        }
+
+        // If we found multiple matches, return the most specific one
+        // (the one with the smallest area)
+        if matching_ids.len() > 1 {
+            let mut smallest_id = matching_ids[0];
+            let mut smallest_area = usize::MAX;
+
+            for id in matching_ids {
+                let loc = &self.id_to_location[&id];
+                let start_line = loc.start_line();
+                let start_col = loc.start_column();
+                let end_line = loc.end_line().unwrap_or(start_line);
+                let end_col = loc.end_column().unwrap_or(start_col);
+
+                // Calculate the "area" of the location (lines × columns)
+                let lines = end_line - start_line + 1;
+                let cols = if start_line == end_line {
+                    end_col - start_col + 1
+                } else {
+                    // For multi-line spans, we'll use a simplified metric
+                    // that considers the overall size
+                    end_col + 80 * (lines - 1)
+                };
+
+                let area = lines * cols;
+                if area < smallest_area {
+                    smallest_area = area;
+                    smallest_id = id;
+                }
+            }
+
+            Some(smallest_id)
+        } else {
+            Some(matching_ids[0])
+        }
+    }
+
+    /// Highlight a node in the source document
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the node to highlight
+    /// * `source` - The source text of the YAML document
+    /// * `context_lines` - Number of context lines to show around the node (0 to show only the node lines)
+    ///
+    /// # Returns
+    ///
+    /// A formatted string showing the node's source with highlighting
+    #[must_use]
+    pub fn highlight_node(&self, id: NodeId, source: &str, context_lines: usize) -> String {
+        let location = match self.get_location(id) {
+            Some(loc) => loc,
+            None => return String::from("Node not found in source map"),
+        };
+
+        let lines: Vec<&str> = source.lines().collect();
+
+        // Get the start and end lines
+        let start_line = location.start_line();
+        let start_idx = start_line.saturating_sub(1); // Convert to 0-indexed
+        let end_line = location.end_line().unwrap_or(start_line);
+        let end_idx = end_line.saturating_sub(1); // Convert to 0-indexed
+
+        // Calculate context range
+        let context_start = start_line.saturating_sub(context_lines);
+        let context_end = (end_line + context_lines).min(lines.len());
+
+        let mut result = String::new();
+
+        // Add line numbers and content with highlighting
+        for i in context_start..=context_end {
+            let idx = i.saturating_sub(1);
+            if idx < lines.len() {
+                let line_content = lines[idx];
+
+                // Highlight the node lines
+                if i >= start_line && i <= end_line {
+                    result.push_str(&format!("> {}: {}\n", i, line_content));
+                } else {
+                    result.push_str(&format!("  {}: {}\n", i, line_content));
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Format errors for nodes based on a map of error messages
+    ///
+    /// # Arguments
+    ///
+    /// * `errors` - A map of node IDs to error messages
+    /// * `source` - The source text of the YAML document
+    ///
+    /// # Returns
+    ///
+    /// A vector of formatted error messages with source location information
+    #[must_use]
+    pub fn format_errors(&self, errors: &HashMap<NodeId, String>, source: &str) -> Vec<String> {
+        let mut result = Vec::new();
+
+        for (id, message) in errors {
+            if let Some(location) = self.get_location(*id) {
+                result.push(location.format_error(message, source));
+            }
+        }
+
+        result
     }
 }
 
