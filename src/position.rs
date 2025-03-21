@@ -5,6 +5,7 @@
 
 use crate::parser::Event;
 use crate::scanner::{Marker, ScanError, TMappingStyle};
+use crate::yaml::Yaml;
 
 /// A start and end position for a YAML construct.
 ///
@@ -91,6 +92,8 @@ pub struct PositionTracker {
     position_stack: Vec<(usize, Marker)>,
     /// Map of anchor ID to position
     anchor_positions: std::collections::HashMap<usize, Marker>,
+    /// Map of anchor ID to node content
+    anchor_nodes: std::collections::HashMap<usize, Yaml>,
 }
 
 impl PositionTracker {
@@ -100,6 +103,7 @@ impl PositionTracker {
         PositionTracker {
             position_stack: Vec::new(),
             anchor_positions: std::collections::HashMap::new(),
+            anchor_nodes: std::collections::HashMap::new(),
         }
     }
 
@@ -161,6 +165,23 @@ impl PositionTracker {
     #[must_use]
     pub fn get_anchor_position(&self, anchor_id: usize) -> Option<Marker> {
         self.anchor_positions.get(&anchor_id).copied()
+    }
+
+    /// Store a node for an anchor
+    ///
+    /// This is used to remember both the position and content of an anchor
+    /// for future reference when resolving aliases.
+    pub fn store_anchor_node(&mut self, anchor_id: usize, node: Yaml) {
+        self.anchor_nodes.insert(anchor_id, node);
+    }
+
+    /// Get the node associated with an anchor
+    ///
+    /// Returns the node that was stored for the given anchor ID,
+    /// or None if no node was stored.
+    #[must_use]
+    pub fn get_anchor_node(&self, anchor_id: usize) -> Option<&Yaml> {
+        self.anchor_nodes.get(&anchor_id)
     }
 
     /// Process an event and update position tracking

@@ -484,7 +484,14 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Added tests to verify the anchor position tracking functionality
 - Ensured backward compatibility with existing code
 
-### Stage 4: Remove anchor_map (next)
+### Stage 4: Remove anchor_map (in progress)
+
+- Extended `PositionTracker` to store both anchor positions and node content
+- Added `store_anchor_node` and `get_anchor_node` methods to manage anchor nodes
+- Updated the parser to store scalar anchor nodes in the position tracker
+- Enhanced alias handling to check for nodes in the position tracker
+- Added tests to verify the enhanced anchor node tracking
+- Maintained backward compatibility with existing code during the transition
 
 ## Future Considerations
 

@@ -766,6 +766,11 @@ impl<T: Iterator<Item = char>> Parser<T> {
         self.anchor_names.insert(new_id, name.clone());
         // Update the name->id mapping to point to the new ID
         self.anchors.insert(name, new_id);
+
+        // Store the position of this anchor in our position tracker
+        // Note: The actual node content will be stored when we process the next token
+        //       For now, we just track the anchor ID and its position
+
         new_id
     }
 
@@ -783,7 +788,14 @@ impl<T: Iterator<Item = char>> Parser<T> {
                                 "while parsing node, found unknown anchor",
                             ))
                         }
-                        Some(id) => return Ok((Event::Alias(*id), mark)),
+                        Some(id) => {
+                            // Check if we have the node in our position tracker
+                            // This is for future use when we remove the anchor_map completely
+                            // For now, we're just preparing the infrastructure
+                            let _node = self.position_tracker.get_anchor_node(*id);
+
+                            return Ok((Event::Alias(*id), mark));
+                        }
                     }
                 }
                 unreachable!()
@@ -1207,6 +1219,16 @@ impl<T: Iterator<Item = char>> Parser<T> {
         event: &Event,
         mark: Marker,
     ) -> crate::position::PositionSpan {
+        // When we have a scalar with an anchor, store the node in our position tracker
+        // This will allow us to resolve aliases later without using the anchor_map
+        if let Event::Scalar(value, _style, anchor_id, _tag) = event {
+            if *anchor_id > 0 {
+                // Clone the scalar to create a Yaml node for tracking
+                let node = crate::yaml::Yaml::String(value.clone());
+                self.position_tracker.store_anchor_node(*anchor_id, node);
+            }
+        }
+
         self.position_tracker.process_event(event, mark)
     }
 

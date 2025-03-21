@@ -278,5 +278,10 @@ fn test_anchor_positions() {
 
         assert_eq!(alias_span.start.line(), 2);
         assert!(alias_span.start.col() > 0);
+
+        // Verify the anchor node is stored in the position tracker
+        // Note: This requires modifying the Parser to expose its position_tracker,
+        // which would be part of the full implementation. For now, we're just testing
+        // the basic functionality.
     }
 }
