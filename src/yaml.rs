@@ -1318,3 +1318,50 @@ impl MarkedEventReceiver for PositionTrackedLoader {
         self.on_event(ev, span.start);
     }
 }
+
+// Add a new module for feature-gated loader implementations
+/// Module that selects the appropriate loader implementation based on feature flags
+pub mod loader {
+    use super::*;
+
+    /// The default loader implementation used by the library
+    ///
+    /// When the `position_tracked_loader` feature is enabled, this will use the
+    /// `PositionTrackedLoader` implementation. Otherwise, it will use the
+    /// original `YamlLoader` implementation.
+    #[cfg(not(feature = "position_tracked_loader"))]
+    pub type DefaultLoader = YamlLoader;
+
+    /// The default loader implementation used by the library
+    ///
+    /// When the `position_tracked_loader` feature is enabled, this will use the
+    /// `PositionTrackedLoader` implementation. Otherwise, it will use the
+    /// original `YamlLoader` implementation.
+    #[cfg(feature = "position_tracked_loader")]
+    pub type DefaultLoader = PositionTrackedLoader;
+
+    /// Load YAML documents from a string
+    ///
+    /// This function uses the default loader implementation, which depends
+    /// on the feature flags enabled.
+    ///
+    /// # Errors
+    /// Returns a `ScanError` if the YAML document could not be parsed.
+    pub fn load_from_str(source: &str) -> Result<Vec<Yaml>, ScanError> {
+        DefaultLoader::load_from_str(source)
+    }
+
+    /// Load YAML documents from an iterator of characters
+    ///
+    /// This function uses the default loader implementation, which depends
+    /// on the feature flags enabled.
+    ///
+    /// # Errors
+    /// Returns a `ScanError` if the YAML document could not be parsed.
+    pub fn load_from_iter<I: Iterator<Item = char>>(source: I) -> Result<Vec<Yaml>, ScanError> {
+        DefaultLoader::load_from_iter(source)
+    }
+}
+
+// Re-export the loader functions for ease of use
+pub use self::loader::{load_from_iter, load_from_str};

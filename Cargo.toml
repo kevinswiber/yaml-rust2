@@ -4,7 +4,7 @@ version = "0.10.0"
 authors = [
   "Yuheng Chen <yuhengchen@sensetime.com>",
   "Ethiraric <ethiraric@gmail.com>",
-  "David Aguilar <davvid@gmail.com>"
+  "David Aguilar <davvid@gmail.com>",
 ]
 documentation = "https://docs.rs/yaml-rust2"
 license = "MIT OR Apache-2.0"
@@ -15,9 +15,10 @@ edition = "2021"
 rust-version = "1.70.0"
 
 [features]
-default = [ "encoding" ]
+default = ["encoding"]
 debug_prints = []
-encoding = [ "dep:encoding_rs" ]
+encoding = ["dep:encoding_rs"]
+position_tracked_loader = []
 
 [dependencies]
 arraydeque = "0.5.1"

@@ -30,6 +30,17 @@
 //!
 //! ```
 //!
+//! You can also use the feature-gated loader API:
+//!
+//! ```
+//! use yaml_rust2::yaml::loader;
+//!
+//! // This uses the default loader implementation which depends on feature flags
+//! let docs = loader::load_from_str("[1, 2, 3]").unwrap();
+//! let doc = &docs[0];
+//! assert_eq!(doc[0].as_i64().unwrap(), 1);
+//! ```
+//!
 //! # Features
 //! **Note:** With all features disabled, this crate's MSRV is `1.65.0`.
 //!
@@ -44,6 +55,14 @@
 //! decrease performance.
 //!
 //! The MSRV for this feature is `1.70.0`.
+//!
+//! #### `position_tracked_loader`
+//! Enables the position-tracked loader implementation that uses the `PositionTracker` for
+//! managing anchors and references instead of using the internal anchor map. This provides
+//! better position tracking for complex YAML documents with anchors and references.
+//!
+//! When this feature is enabled, the default loader type (`yaml::loader::DefaultLoader`) will
+//! be the `PositionTrackedLoader` instead of the original `YamlLoader`.
 
 #![warn(missing_docs, clippy::pedantic)]
 
@@ -63,4 +82,5 @@ pub use crate::emitter::{EmitError, YamlEmitter};
 pub use crate::parser::Event;
 pub use crate::position::PositionSpan;
 pub use crate::scanner::ScanError;
-pub use crate::yaml::{Yaml, YamlLoader};
+pub use crate::yaml::loader::{load_from_iter, load_from_str};
+pub use crate::yaml::{PositionTrackedLoader, Yaml, YamlLoader};
