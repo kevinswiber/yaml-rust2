@@ -54,11 +54,13 @@ pub(crate) mod char_traits;
 pub(crate) mod debug;
 pub mod emitter;
 pub mod parser;
+pub mod position;
 pub mod scanner;
 pub mod yaml;
 
 // reexport key APIs
 pub use crate::emitter::{EmitError, YamlEmitter};
 pub use crate::parser::Event;
+pub use crate::position::PositionSpan;
 pub use crate::scanner::ScanError;
 pub use crate::yaml::{Yaml, YamlLoader};
