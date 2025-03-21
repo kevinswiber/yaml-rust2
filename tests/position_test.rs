@@ -1,29 +1,36 @@
-use yaml_rust2::{
-    parser::{Event, MarkedEventReceiver, Parser},
-    position::PositionSpan,
-    scanner::Marker,
-};
+use yaml_rust2::parser::{Event, EventReceiver, MarkedEventReceiver, Parser};
+use yaml_rust2::position::{PositionSpan, PositionTracker};
+use yaml_rust2::scanner::Marker;
+use yaml_rust2::yaml::Yaml;
 
-/// A receiver that collects events with position spans.
-#[derive(Debug)]
+/// A test receiver that collects events with position spans
 struct PositionTestReceiver {
-    /// Collected events
     events: Vec<(Event, PositionSpan)>,
+    position_tracker: PositionTracker,
 }
 
 impl PositionTestReceiver {
     fn new() -> Self {
-        PositionTestReceiver { events: Vec::new() }
+        PositionTestReceiver {
+            events: Vec::new(),
+            position_tracker: PositionTracker::new(),
+        }
     }
 
-    fn get_events(&self) -> &[(Event, PositionSpan)] {
+    fn get_events(&self) -> &Vec<(Event, PositionSpan)> {
         &self.events
+    }
+
+    fn get_position_tracker(&self) -> &PositionTracker {
+        &self.position_tracker
     }
 }
 
 impl MarkedEventReceiver for PositionTestReceiver {
-    fn on_event(&mut self, _ev: Event, _mark: Marker) {
-        // We don't use this method, we only care about events with position spans
+    fn on_event(&mut self, event: Event, mark: Marker) {
+        // Track the event in our position tracker for anchor tracking
+        let _span = self.position_tracker.process_event(&event, mark);
+        // But don't push it to events - we use on_positioned_event instead
     }
 
     fn on_positioned_event(&mut self, ev: Event, span: PositionSpan) {
@@ -296,10 +303,45 @@ nested:
   - *seq_anchor
   - *map_anchor";
 
-    let mut parser = Parser::new(yaml.chars());
-    let mut receiver = PositionTestReceiver::new();
+    // Create a custom position tracker and receiver
+    let mut pos_tracker = PositionTracker::new();
 
-    let _ = parser.load_with_positions(&mut receiver, false);
+    // Create a custom receiver that will use our position tracker
+    struct AnchorTrackingReceiver {
+        events: Vec<(Event, PositionSpan)>,
+        position_tracker: PositionTracker,
+    }
+
+    impl AnchorTrackingReceiver {
+        fn new(tracker: PositionTracker) -> Self {
+            Self {
+                events: Vec::new(),
+                position_tracker: tracker,
+            }
+        }
+
+        fn get_events(&self) -> &Vec<(Event, PositionSpan)> {
+            &self.events
+        }
+
+        fn get_position_tracker(&self) -> &PositionTracker {
+            &self.position_tracker
+        }
+    }
+
+    impl MarkedEventReceiver for AnchorTrackingReceiver {
+        fn on_event(&mut self, event: Event, mark: Marker) {
+            // Process the event with our position tracker
+            let span = self.position_tracker.process_event(&event, mark);
+            self.events.push((event, span));
+        }
+    }
+
+    // Parse the YAML using our custom receiver
+    let mut parser = Parser::new(yaml.chars());
+    let mut receiver = AnchorTrackingReceiver::new(pos_tracker);
+
+    let _ = parser.load(&mut receiver, false);
 
     // Find the sequence anchor event
     let events = receiver.get_events();
@@ -325,6 +367,20 @@ nested:
             alias_span.start.line()
         );
         assert_eq!(alias_span.start.line(), 5);
+
+        // Check that the position tracker stored the sequence
+        let position_tracker = receiver.get_position_tracker();
+        let node = position_tracker.get_anchor_node(*seq_anchor_id);
+        assert!(
+            node.is_some(),
+            "Anchor node should be stored in position tracker"
+        );
+
+        if let Some(Yaml::Array(_)) = node {
+            // It's an array, which is what we expect
+        } else {
+            panic!("Expected a sequence node");
+        }
     }
 
     // Find the mapping with anchor
@@ -348,5 +404,19 @@ nested:
             alias_span.start.line()
         );
         assert_eq!(alias_span.start.line(), 6);
+
+        // Check that the position tracker stored the mapping
+        let position_tracker = receiver.get_position_tracker();
+        let node = position_tracker.get_anchor_node(*map_anchor_id);
+        assert!(
+            node.is_some(),
+            "Anchor node should be stored in position tracker"
+        );
+
+        if let Some(Yaml::Hash(_)) = node {
+            // It's a hash, which is what we expect
+        } else {
+            panic!("Expected a mapping node");
+        }
     }
 }

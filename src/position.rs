@@ -172,6 +172,14 @@ impl PositionTracker {
     ///
     /// This is used to remember both the position and content of an anchor
     /// for future reference when resolving aliases.
+    ///
+    /// # Arguments
+    ///
+    /// * `anchor_id` - The unique ID of the anchor
+    /// * `node` - The YAML node content to store (can be a scalar, sequence, or mapping)
+    ///
+    /// This method is particularly useful when tracking complex anchors like sequences and mappings,
+    /// as it allows for complete node resolution when encountering aliases.
     pub fn store_anchor_node(&mut self, anchor_id: usize, node: Yaml) {
         self.anchor_nodes.insert(anchor_id, node);
     }
@@ -180,9 +188,97 @@ impl PositionTracker {
     ///
     /// Returns the node that was stored for the given anchor ID,
     /// or None if no node was stored.
+    ///
+    /// # Arguments
+    ///
+    /// * `anchor_id` - The unique ID of the anchor to look up
+    ///
+    /// # Returns
+    ///
+    /// * `Some(&Yaml)` - Reference to the stored node if found
+    /// * `None` - If no node exists for this anchor ID
+    ///
+    /// This method works for all node types (scalar, sequence, mapping)
+    /// and is used when resolving aliases in the YAML document.
     #[must_use]
     pub fn get_anchor_node(&self, anchor_id: usize) -> Option<&Yaml> {
         self.anchor_nodes.get(&anchor_id)
+    }
+
+    /// Convert a scalar value to the appropriate Yaml type based on style and tag
+    ///
+    /// This helper method determines the appropriate Yaml type for a scalar value
+    /// considering the style, tag, and content of the scalar.
+    fn convert_scalar_value(value: &str, style: &TScalarStyle, tag: &Option<Tag>) -> Yaml {
+        if *style != TScalarStyle::Plain {
+            // Non-plain scalars are always stored as strings
+            return Yaml::String(String::from(value));
+        }
+
+        // Check if there's a tag
+        if let Some(Tag {
+            ref handle,
+            ref suffix,
+        }) = tag
+        {
+            if handle == "tag:yaml.org,2002:" {
+                match suffix.as_ref() {
+                    "bool" => {
+                        if let Ok(v) = value.parse::<bool>() {
+                            return Yaml::Boolean(v);
+                        } else {
+                            return Yaml::BadValue;
+                        }
+                    }
+                    "int" => {
+                        if let Ok(v) = value.parse::<i64>() {
+                            return Yaml::Integer(v);
+                        } else {
+                            return Yaml::BadValue;
+                        }
+                    }
+                    "float" => return Yaml::Real(String::from(value)),
+                    "null" => {
+                        if value == "~" || value == "null" {
+                            return Yaml::Null;
+                        } else {
+                            return Yaml::BadValue;
+                        }
+                    }
+                    _ => return Yaml::String(String::from(value)),
+                }
+            } else {
+                return Yaml::String(String::from(value));
+            }
+        }
+
+        // Try to convert the value based on its content (plain scalar)
+        if value == "~" || value == "null" {
+            Yaml::Null
+        } else if value == "true" {
+            Yaml::Boolean(true)
+        } else if value == "false" {
+            Yaml::Boolean(false)
+        } else if let Ok(i) = value.parse::<i64>() {
+            Yaml::Integer(i)
+        } else if value == ".inf"
+            || value == ".Inf"
+            || value == ".INF"
+            || value == "+.inf"
+            || value == "+.Inf"
+            || value == "+.INF"
+            || value == "-.inf"
+            || value == "-.Inf"
+            || value == "-.INF"
+            || value == ".nan"
+            || value == "NaN"
+            || value == ".NAN"
+            || value.parse::<f64>().is_ok()
+        {
+            Yaml::Real(String::from(value))
+        } else {
+            Yaml::String(String::from(value))
+        }
     }
 
     /// Process an event and update position tracking
@@ -258,81 +354,8 @@ impl PositionTracker {
                 // For scalars with anchors, track the anchor position
                 self.track_anchor(*anchor_id, mark);
 
-                // Store the node content based on the style and value
-                let node = if *style != TScalarStyle::Plain {
-                    // Non-plain scalars are always stored as strings
-                    Yaml::String(value.clone())
-                } else if tag.is_some() {
-                    // If there's a tag, we need to parse it according to the tag
-                    // This is a simplified version - in practice you'd need more logic
-                    if let Some(Tag {
-                        ref handle,
-                        ref suffix,
-                    }) = tag
-                    {
-                        if handle == "tag:yaml.org,2002:" {
-                            match suffix.as_ref() {
-                                "bool" => {
-                                    if let Ok(v) = value.parse::<bool>() {
-                                        Yaml::Boolean(v)
-                                    } else {
-                                        Yaml::BadValue
-                                    }
-                                }
-                                "int" => {
-                                    if let Ok(v) = value.parse::<i64>() {
-                                        Yaml::Integer(v)
-                                    } else {
-                                        Yaml::BadValue
-                                    }
-                                }
-                                "float" => Yaml::Real(value.clone()),
-                                "null" => {
-                                    if value == "~" || value == "null" {
-                                        Yaml::Null
-                                    } else {
-                                        Yaml::BadValue
-                                    }
-                                }
-                                _ => Yaml::String(value.clone()),
-                            }
-                        } else {
-                            Yaml::String(value.clone())
-                        }
-                    } else {
-                        // Fallback to string if tag parsing fails
-                        Yaml::String(value.clone())
-                    }
-                } else {
-                    // Try to convert the value based on its content (plain scalar)
-                    // This is a simplified version of Yaml::from_str
-                    if value == "~" || value == "null" {
-                        Yaml::Null
-                    } else if value == "true" {
-                        Yaml::Boolean(true)
-                    } else if value == "false" {
-                        Yaml::Boolean(false)
-                    } else if let Ok(i) = value.parse::<i64>() {
-                        Yaml::Integer(i)
-                    } else if value == ".inf"
-                        || value == ".Inf"
-                        || value == ".INF"
-                        || value == "+.inf"
-                        || value == "+.Inf"
-                        || value == "+.INF"
-                        || value == "-.inf"
-                        || value == "-.Inf"
-                        || value == "-.INF"
-                        || value == ".nan"
-                        || value == "NaN"
-                        || value == ".NAN"
-                        || value.parse::<f64>().is_ok()
-                    {
-                        Yaml::Real(value.clone())
-                    } else {
-                        Yaml::String(value.clone())
-                    }
-                };
+                // Convert the scalar value to the appropriate Yaml type
+                let node = Self::convert_scalar_value(value, style, tag);
 
                 // Store the node for this anchor
                 self.store_anchor_node(*anchor_id, node);
