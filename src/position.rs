@@ -97,6 +97,8 @@ pub struct PositionTracker {
     anchor_nodes: std::collections::HashMap<usize, Yaml>,
     /// Map of node pointers to positions (for all nodes, not just anchors)
     node_positions: std::collections::HashMap<usize, Marker>,
+    /// Map of node content hash to node ID
+    node_content_hash_map: std::collections::HashMap<u64, usize>,
     /// Counter for generating unique node IDs
     next_node_id: usize,
 }
@@ -110,6 +112,7 @@ impl PositionTracker {
             anchor_positions: std::collections::HashMap::new(),
             anchor_nodes: std::collections::HashMap::new(),
             node_positions: std::collections::HashMap::new(),
+            node_content_hash_map: std::collections::HashMap::new(),
             next_node_id: 1, // Start from 1
         }
     }
@@ -268,6 +271,127 @@ impl PositionTracker {
         self.node_positions.iter().map(|(&id, &pos)| (id, pos))
     }
 
+    /// Track a node by its content and position
+    ///
+    /// This method associates a content hash with a node position,
+    /// enabling more reliable position lookups for non-anchored nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_hash` - A hash of the node's content
+    /// * `position` - The position of the node
+    ///
+    /// # Returns
+    ///
+    /// A unique ID for the tracked node
+    pub fn track_node_with_hash(&mut self, content_hash: u64, position: Marker) -> usize {
+        let node_id = self.track_node_position(position);
+        self.node_content_hash_map.insert(content_hash, node_id);
+        node_id
+    }
+
+    /// Get the position of a node by its content hash
+    ///
+    /// # Arguments
+    ///
+    /// * `content_hash` - A hash of the node's content
+    ///
+    /// # Returns
+    ///
+    /// The position of the node, or None if not found
+    #[must_use]
+    pub fn get_position_by_hash(&self, content_hash: u64) -> Option<Marker> {
+        self.node_content_hash_map
+            .get(&content_hash)
+            .and_then(|node_id| self.get_node_position(*node_id))
+    }
+
+    /// Calculate a simple hash for a YAML node
+    ///
+    /// This method generates a hash for a node based on its content.
+    /// Note: This is a basic implementation and could be improved for better
+    /// collision avoidance, especially for complex structures.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The YAML node to hash
+    ///
+    /// # Returns
+    ///
+    /// A content hash that can be used to identify similar nodes
+    #[must_use]
+    pub fn calculate_node_hash(node: &Yaml) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+
+        match node {
+            Yaml::String(s) => {
+                "string".hash(&mut hasher);
+                s.hash(&mut hasher);
+            }
+            Yaml::Integer(i) => {
+                "integer".hash(&mut hasher);
+                i.hash(&mut hasher);
+            }
+            Yaml::Real(r) => {
+                "real".hash(&mut hasher);
+                r.hash(&mut hasher);
+            }
+            Yaml::Boolean(b) => {
+                "boolean".hash(&mut hasher);
+                b.hash(&mut hasher);
+            }
+            Yaml::Array(a) => {
+                "array".hash(&mut hasher);
+                a.len().hash(&mut hasher);
+                if !a.is_empty() {
+                    // Add the type of the first element for better differentiation
+                    match &a[0] {
+                        Yaml::String(_) => "string_array".hash(&mut hasher),
+                        Yaml::Integer(_) => "int_array".hash(&mut hasher),
+                        Yaml::Hash(_) => "hash_array".hash(&mut hasher),
+                        _ => "mixed_array".hash(&mut hasher),
+                    }
+                }
+            }
+            Yaml::Hash(h) => {
+                "hash".hash(&mut hasher);
+                h.len().hash(&mut hasher);
+
+                // Try to hash some key names for better identification
+                let mut keys = h.keys().collect::<Vec<_>>();
+                keys.sort_by(|a, b| {
+                    if let (Yaml::String(a_str), Yaml::String(b_str)) = (a, b) {
+                        a_str.cmp(b_str)
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                });
+
+                // Hash up to 3 keys for identification
+                for key in keys.iter().take(3) {
+                    if let Yaml::String(key_str) = key {
+                        key_str.hash(&mut hasher);
+                    }
+                }
+            }
+            Yaml::Alias(id) => {
+                "alias".hash(&mut hasher);
+                id.hash(&mut hasher);
+            }
+            Yaml::BadValue => {
+                "badvalue".hash(&mut hasher);
+            }
+            Yaml::Null => {
+                "null".hash(&mut hasher);
+            }
+        }
+
+        hasher.finish()
+    }
+
     /// Convert a scalar value to the appropriate Yaml type based on style and tag
     ///
     /// This helper method determines the appropriate Yaml type for a scalar value
@@ -368,11 +492,15 @@ impl PositionTracker {
                     self.track_anchor(*anchor_id, mark);
                     // For now, we can't store the node content as we don't have the full mapping yet
                     // We'll store an empty mapping that will be populated later
-                    self.store_anchor_node(*anchor_id, Yaml::Hash(crate::yaml::Hash::new()));
+                    let empty_map = Yaml::Hash(crate::yaml::Hash::new());
+                    self.store_anchor_node(*anchor_id, empty_map);
                 }
 
                 // Track this node position regardless of anchor
-                self.track_node_position(mark);
+                // We also track the content hash for empty maps
+                let empty_map = Yaml::Hash(crate::yaml::Hash::new());
+                let hash = Self::calculate_node_hash(&empty_map);
+                self.track_node_with_hash(hash, mark);
 
                 PositionSpan::new(mark)
             }
@@ -397,11 +525,15 @@ impl PositionTracker {
                     self.track_anchor(*anchor_id, mark);
                     // For now, we can't store the node content as we don't have the full sequence yet
                     // We'll store an empty sequence that will be populated later
-                    self.store_anchor_node(*anchor_id, Yaml::Array(Vec::new()));
+                    let empty_seq = Yaml::Array(Vec::new());
+                    self.store_anchor_node(*anchor_id, empty_seq);
                 }
 
                 // Track this node position regardless of anchor
-                self.track_node_position(mark);
+                // We also track the content hash for empty sequences
+                let empty_seq = Yaml::Array(Vec::new());
+                let hash = Self::calculate_node_hash(&empty_seq);
+                self.track_node_with_hash(hash, mark);
 
                 PositionSpan::new(mark)
             }
@@ -419,20 +551,22 @@ impl PositionTracker {
                 // For scalars, create a span with just the current position
                 let span = PositionSpan::new(mark);
 
+                // Convert the scalar value to the appropriate Yaml type
+                let node = Self::convert_scalar_value(value, style, tag);
+
+                // Generate a hash for this scalar node
+                let hash = Self::calculate_node_hash(&node);
+
+                // Track this node with its content hash
+                self.track_node_with_hash(hash, mark);
+
                 // If this is an anchor, track it
                 if *anchor_id > 0 {
                     // For scalars with anchors, track the anchor position
                     self.track_anchor(*anchor_id, mark);
-
-                    // Convert the scalar value to the appropriate Yaml type
-                    let node = Self::convert_scalar_value(value, style, tag);
-
-                    // Store the node for this anchor
+                    // Store the converted node
                     self.store_anchor_node(*anchor_id, node);
                 }
-
-                // Track this node position regardless of anchor
-                self.track_node_position(mark);
 
                 span
             }
@@ -477,6 +611,30 @@ impl PositionTracker {
             }
         }
         None
+    }
+
+    /// Store a path reference for a node
+    ///
+    /// This method stores a path (like "document.basic_types.integer") for a node,
+    /// which helps with identifying nodes by their logical path in the document.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A string path identifying the node's location in the document
+    /// * `position` - The position of the node
+    ///
+    /// # Returns
+    ///
+    /// A unique ID for the tracked node
+    pub fn track_node_with_path(&mut self, path: &str, position: Marker) -> usize {
+        let node_id = self.track_node_position(position);
+        // Use the path as part of the content hash
+        use std::hash::{Hash, Hasher};
+        let mut path_hash = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut path_hash);
+        self.node_content_hash_map
+            .insert(path_hash.finish(), node_id);
+        node_id
     }
 }
 

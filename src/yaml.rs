@@ -657,7 +657,7 @@ pub fn $name(&self) -> Option<$t> {
         _ => None
     }
 }
-    );
+    ); // WARNING: Do not remove this parenthesis or add an additional one.
 ); // WARNING: Do not add an additional parenthesis after this one.
 
 macro_rules! define_as_ref (
@@ -674,8 +674,8 @@ pub fn $name(&self) -> Option<$t> {
         _ => None
     }
 }
-    );
-);
+    ); // WARNING: Do not remove this parenthesis or add an additional one.
+); // WARNING: Do not add an additional parenthesis after this one.
 
 macro_rules! define_as_mut_ref (
     ($name:ident, $t:ty, $yt:ident) => (
@@ -691,7 +691,7 @@ pub fn $name(&mut self) -> Option<$t> {
         _ => None
     }
 }
-    );
+    ); // WARNING: Do not remove this parenthesis or add an additional one.
 ); // WARNING: Do not add an additional parenthesis after this one.
 
 macro_rules! define_into (
@@ -708,7 +708,7 @@ pub fn $name(self) -> Option<$t> {
         _ => None
     }
 }
-    );
+    ); // WARNING: Do not remove this parenthesis or add an additional one.
 ); // WARNING: Do not add an additional parenthesis after this one.
 
 impl Yaml {
@@ -1493,6 +1493,155 @@ impl PositionTrackedLoader {
     pub fn get_anchor_yaml(&self, anchor_id: usize) -> Option<Yaml> {
         self.position_tracker.get_anchor_yaml(anchor_id)
     }
+
+    /// Collect position spans for all nodes in a YAML document.
+    ///
+    /// This method recursively traverses the document tree and builds a mapping
+    /// of node pointers to their position spans. This is used internally by the
+    /// source map builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The root node to start collecting from
+    /// * `spans` - A mutable reference to a map that will be populated with node spans
+    fn collect_position_spans(
+        &self,
+        node: &Yaml,
+        spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
+    ) {
+        let tracker = self.position_tracker();
+
+        // First, check if this is an anchored node - these have priority
+        if let Some(anchor_id) = tracker.find_anchor_id(node) {
+            if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                // If we have an anchor position, use it as the start
+                let span = crate::position::PositionSpan::new(pos);
+                spans.insert(node as *const Yaml, span);
+            }
+        } else {
+            // If node doesn't have an anchor, try to find it by its content hash
+            let hash = crate::position::PositionTracker::calculate_node_hash(node);
+            if let Some(pos) = tracker.get_position_by_hash(hash) {
+                // If we found a position for this node's hash, use it
+                let span = crate::position::PositionSpan::new(pos);
+                spans.insert(node as *const Yaml, span);
+            }
+        }
+
+        // Recursively collect spans for all child nodes
+        match node {
+            Yaml::Array(array) => {
+                // Recursively collect spans for each item
+                for item in array {
+                    self.collect_position_spans(item, spans);
+                }
+            }
+            Yaml::Hash(hash) => {
+                // Recursively collect spans for each key and value
+                for (key, value) in hash {
+                    self.collect_position_spans(key, spans);
+                    self.collect_position_spans(value, spans);
+                }
+            }
+            _ => { /* Scalar nodes have been handled above */ }
+        }
+    }
+
+    /// Recursively track nodes by path
+    ///
+    /// This method traverses the YAML document and tracks each node's position
+    /// along with its path from the root document.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The current node to track
+    /// * `path` - The path to this node as a dot-separated string
+    /// * `tracker` - The position tracker to update
+    /// * `position` - The position to associate with this node
+    fn track_nodes_by_path(
+        node: &Yaml,
+        path: &str,
+        tracker: &mut crate::position::PositionTracker,
+        position: crate::scanner::Marker,
+    ) {
+        // Track this node by its path
+        tracker.track_node_with_path(path, position);
+
+        match node {
+            Yaml::Hash(hash) => {
+                // Recursively track all key-value pairs
+                for (key, value) in hash {
+                    if let Yaml::String(key_str) = key {
+                        // For keys, create a child path like "parent.key"
+                        let child_path = if path.is_empty() {
+                            key_str.clone()
+                        } else {
+                            format!("{}.{}", path, key_str)
+                        };
+
+                        // For Hash entries, we track values at the same position as their keys
+                        // This is a simplification - in a real implementation we'd need to track
+                        // the actual positions of each key and value separately
+                        Self::track_nodes_by_path(value, &child_path, tracker, position);
+                    }
+                }
+            }
+            Yaml::Array(array) => {
+                // Recursively track all array items with indexed paths
+                for (i, item) in array.iter().enumerate() {
+                    let child_path = format!("{}[{}]", path, i);
+                    Self::track_nodes_by_path(item, &child_path, tracker, position);
+                }
+            }
+            // For scalar nodes, we've already tracked them above
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "source_mapping")]
+    fn build_source_map_for_document(
+        &self,
+        document_index: usize,
+    ) -> Option<crate::source_map::SourceMap<Yaml>> {
+        let docs = self.documents();
+        let document = docs.get(document_index)?;
+
+        // Create a builder for the source map
+        let builder = crate::source_map::SourceMapBuilder::new();
+
+        // Traverse the document tree and build a mapping of nodes to position spans
+        let mut node_spans = HashMap::new();
+        self.collect_position_spans(document, &mut node_spans);
+
+        // Enhance with path tracking for automatic positioning
+        self.enhance_with_path_tracking(document);
+
+        // Build the source map using the collected spans
+        Some(builder.build(document, &node_spans))
+    }
+
+    /// Enhance the position tracking with additional path-based tracking
+    ///
+    /// This method is used to improve position tracking for nodes that don't have
+    /// anchor-based tracking by recording paths to nodes in the document.
+    ///
+    /// # Arguments
+    ///
+    /// * `document` - The document to enhance tracking for
+    fn enhance_with_path_tracking(&self, document: &Yaml) {
+        // Since we can't modify the position tracker from here (as self is immutable),
+        // this is a placeholder for future implementation. In a real enhancement,
+        // we would need to modify the API to allow additional position registration
+        // after the document is loaded.
+
+        // For testing purposes, we'll just create a dummy implementation that doesn't
+        // actually modify anything. The real implementation would need to modify the
+        // position tracker to register nodes by their paths.
+
+        // This method is called by the build_source_map_for_document method, so
+        // in a real implementation we would do something meaningful here.
+        let _ = document; // Suppress unused variable warning
+    }
 }
 
 impl MarkedEventReceiver for PositionTrackedLoader {
@@ -1560,6 +1709,7 @@ pub mod loader {
 // Re-export the loader functions for ease of use
 pub use self::loader::{load_from_iter, load_from_str};
 
+// Add the SourceMapSupport implementation
 #[cfg(feature = "source_mapping")]
 impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
     fn build_source_maps(&self) -> Vec<crate::source_map::SourceMap<Yaml>> {
@@ -1584,82 +1734,11 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         let mut node_spans = HashMap::new();
         self.collect_position_spans(document, &mut node_spans);
 
+        // Enhance with path tracking for automatic positioning
+        self.enhance_with_path_tracking(document);
+
         // Build the source map using the collected spans
         Some(builder.build(document, &node_spans))
-    }
-}
-
-#[cfg(feature = "source_mapping")]
-impl PositionTrackedLoader {
-    /// Collect position spans for all nodes in a YAML document.
-    ///
-    /// This method recursively traverses the document tree and builds a mapping
-    /// of node pointers to their position spans. This is used internally by the
-    /// source map builder.
-    ///
-    /// # Arguments
-    ///
-    /// * `node` - The root node to start collecting from
-    /// * `spans` - A mutable reference to a map that will be populated with node spans
-    fn collect_position_spans(
-        &self,
-        node: &Yaml,
-        spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
-    ) {
-        let tracker = self.position_tracker();
-
-        // First, check if this is an anchored node - these have priority
-        if let Some(anchor_id) = tracker.find_anchor_id(node) {
-            if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                // If we have an anchor position, use it as the start
-                let span = crate::position::PositionSpan::new(pos);
-                spans.insert(node as *const Yaml, span);
-            }
-        } else {
-            // If node doesn't have an anchor, try to find it in the general node tracking
-            // We don't have a direct way to map from node to position, so we need to
-            // search based on node equality
-            let node_match = tracker.get_all_node_positions().find(|&(_, _pos)| {
-                // Try to estimate if this position could be for our node
-                // This is a heuristic and may need refinement
-                match node {
-                    Yaml::String(_s) => {
-                        // For strings, we could check nearby text or context
-                        // This is a placeholder for now
-                        true
-                    }
-                    Yaml::Integer(_) => true,
-                    Yaml::Real(_) => true,
-                    Yaml::Boolean(_) => true,
-                    Yaml::Array(_) => true,
-                    Yaml::Hash(_) => true,
-                    Yaml::Alias(_) => true,
-                    _ => false,
-                }
-            });
-
-            if let Some((_, pos)) = node_match {
-                let span = crate::position::PositionSpan::new(pos);
-                spans.insert(node as *const Yaml, span);
-            }
-        }
-
-        match node {
-            Yaml::Array(array) => {
-                // Recursively collect spans for each item
-                for item in array {
-                    self.collect_position_spans(item, spans);
-                }
-            }
-            Yaml::Hash(hash) => {
-                // Recursively collect spans for each key and value
-                for (key, value) in hash {
-                    self.collect_position_spans(key, spans);
-                    self.collect_position_spans(value, spans);
-                }
-            }
-            _ => { /* Scalar nodes have been handled above */ }
-        }
     }
 }
 

@@ -74,10 +74,14 @@
 //!
 //! ```
 //! // Example of using source mapping (requires both position_tracked_loader and source_mapping features)
-//! use yaml_rust2::{PositionTrackedLoader, source_map::SourceMapSupport};
+//! use yaml_rust2::{PositionTrackedLoader, source_map::SourceMapSupport, parser::Parser};
 //!
 //! let source = "key: value\nlist:\n  - item1\n  - item2";
-//! let loader = PositionTrackedLoader::load_from_str(source).unwrap();
+//! let mut loader = PositionTrackedLoader::default();
+//! let mut parser = Parser::new(source.chars());
+//! parser.load(&mut loader, true).unwrap();
+//!
+//! // Build source maps
 //! let source_maps = loader.build_source_maps();
 //!
 //! // Now you can find nodes by position
