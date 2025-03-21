@@ -6,10 +6,6 @@
 
 use crate::scanner::{Marker, ScanError, Scanner, TMappingStyle, TScalarStyle, Token, TokenType};
 use std::collections::HashMap;
-use std::str::FromStr;
-
-use crate::char_traits::is_digit;
-use crate::debug;
 
 /// Tag holds the handle and suffix of a YAML tag
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -810,7 +806,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let TokenType::Anchor(_) = &self.peek_token()?.1 {
-                        if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
+                        if let Token(_mark, TokenType::Anchor(name)) = self.fetch_token() {
                             anchor_id = self.process_anchor(name);
                         } else {
                             unreachable!()

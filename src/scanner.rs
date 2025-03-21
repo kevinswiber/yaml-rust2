@@ -9,7 +9,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
-use std::{char, collections::HashMap, collections::VecDeque, error::Error, fmt};
+use std::{char, collections::VecDeque, error::Error, fmt};
 
 use arraydeque::ArrayDeque;
 

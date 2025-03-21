@@ -1,6 +1,5 @@
 //! YAML serialization helpers.
 
-use crate::char_traits;
 use crate::yaml::{Hash, Yaml, YamlLoader};
 use std::collections::HashSet;
 use std::convert::From;

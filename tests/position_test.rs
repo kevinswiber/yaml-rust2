@@ -251,3 +251,32 @@ fn test_nested_flow_positions() {
         "Outer mapping should end at the right position"
     );
 }
+
+#[test]
+fn test_anchor_positions() {
+    let yaml = "foo: &anchor bar\nalias: *anchor";
+    let mut parser = Parser::new(yaml.chars());
+    let mut receiver = PositionTestReceiver::new();
+
+    let _ = parser.load_with_positions(&mut receiver, false);
+
+    // Look for the anchor event (should be on first line)
+    let events = receiver.get_events();
+    let (event, span) = events.iter()
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, anchor_id, _) if s == "bar" && *anchor_id > 0))
+        .expect("Could not find anchor event");
+
+    if let Event::Scalar(_, _, anchor_id, _) = event {
+        assert_eq!(span.start.line(), 1);
+        assert!(span.start.col() > 0);
+
+        // Now look for the alias event (should be on second line)
+        let (_alias_event, alias_span) = events
+            .iter()
+            .find(|(ev, _)| matches!(ev, Event::Alias(id) if *id == *anchor_id))
+            .expect("Could not find alias event");
+
+        assert_eq!(alias_span.start.line(), 2);
+        assert!(alias_span.start.col() > 0);
+    }
+}

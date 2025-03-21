@@ -89,6 +89,8 @@ pub type PositionedParseResult = Result<(Event, PositionSpan), ScanError>;
 pub struct PositionTracker {
     /// A stack of positions for open constructs
     position_stack: Vec<(usize, Marker)>,
+    /// Map of anchor ID to position
+    anchor_positions: std::collections::HashMap<usize, Marker>,
 }
 
 impl PositionTracker {
@@ -97,6 +99,7 @@ impl PositionTracker {
     pub fn new() -> Self {
         PositionTracker {
             position_stack: Vec::new(),
+            anchor_positions: std::collections::HashMap::new(),
         }
     }
 
@@ -145,6 +148,21 @@ impl PositionTracker {
         self.position_stack.len()
     }
 
+    /// Track an anchor position
+    ///
+    /// This is used to remember the position of an anchor declaration for future reference
+    pub fn track_anchor(&mut self, anchor_id: usize, position: Marker) {
+        self.anchor_positions.insert(anchor_id, position);
+    }
+
+    /// Get the position of an anchor
+    ///
+    /// Returns the position where the anchor was declared
+    #[must_use]
+    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<Marker> {
+        self.anchor_positions.get(&anchor_id).copied()
+    }
+
     /// Process an event and update position tracking
     ///
     /// This method takes an event and its position, updates the position tracker's
@@ -185,6 +203,23 @@ impl PositionTracker {
                     // Otherwise, just return the current position
                     PositionSpan::new(mark)
                 }
+            }
+            Event::Alias(anchor_id) => {
+                // For aliases, create a span with just the current position
+                // but we could also look up the anchor position if needed
+                if let Some(_anchor_pos) = self.get_anchor_position(*anchor_id) {
+                    // If we have the anchor position, create a span from anchor to alias
+                    // This is optional and can be commented out if we only want the alias position
+                    // PositionSpan::with_end(anchor_pos, mark)
+                    PositionSpan::new(mark)
+                } else {
+                    PositionSpan::new(mark)
+                }
+            }
+            Event::Scalar(_, _, anchor_id, _) if *anchor_id > 0 => {
+                // For scalars with anchors, track the anchor position
+                self.track_anchor(*anchor_id, mark);
+                PositionSpan::new(mark)
             }
             _ => {
                 // For all other events, just return a span with the current position

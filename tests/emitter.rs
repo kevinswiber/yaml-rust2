@@ -55,7 +55,7 @@ products:
   {}:
     empty hash key
             ";
-    let mut loader = YamlLoader::default();
+    let loader = YamlLoader::default();
     let docs = YamlLoader::load_from_str(s).unwrap();
     let doc = &docs[0];
     let mut writer = String::new();

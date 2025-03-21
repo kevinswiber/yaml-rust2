@@ -475,7 +475,16 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Updated the Parser and MarkedLoader to use the new implementation
 - Updated tests to verify the new implementation
 
-### Stage 3: Remove anchor_map (in progress)
+### Stage 3: Improved Anchor Position Tracking ✅
+
+- Enhanced `PositionTracker` to track anchor/alias positions
+- Added `track_anchor` method to store anchor positions by ID
+- Added `get_anchor_position` method to retrieve anchor positions
+- Updated the event processing logic to handle anchor events with proper position tracking
+- Added tests to verify the anchor position tracking functionality
+- Ensured backward compatibility with existing code
+
+### Stage 4: Remove anchor_map (next)
 
 ## Future Considerations
 
