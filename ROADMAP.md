@@ -489,7 +489,9 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Extended `PositionTracker` to store both anchor positions and node content
 - Added `store_anchor_node` and `get_anchor_node` methods to manage anchor nodes
 - Updated the parser to store scalar anchor nodes in the position tracker
-- Enhanced alias handling to check for nodes in the position tracker
+- Enhanced the position tracker to handle all node types (scalars, sequences, mappings)
+- Implemented proper type detection and conversion for scalar nodes
+- Added support for tracking anchors in flow sequences and mappings
 - Added tests to verify the enhanced anchor node tracking
 - Maintained backward compatibility with existing code during the transition
 

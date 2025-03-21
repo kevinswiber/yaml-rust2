@@ -4,7 +4,8 @@
 //! in the source document, including both start and end positions.
 
 use crate::parser::Event;
-use crate::scanner::{Marker, ScanError, TMappingStyle};
+use crate::parser::Tag;
+use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
 use crate::yaml::Yaml;
 
 /// A start and end position for a YAML construct.
@@ -193,9 +194,18 @@ impl PositionTracker {
     /// delimiter. For other events, it just returns a span with the current position.
     pub fn process_event(&mut self, event: &Event, mark: Marker) -> PositionSpan {
         match event {
-            Event::MappingStart(_, _, style) if *style == TMappingStyle::Flow => {
+            Event::MappingStart(anchor_id, _, style) if *style == TMappingStyle::Flow => {
                 // For flow mappings, push the start position to the stack
                 self.push(0, mark);
+
+                // If this is also an anchor, track it
+                if *anchor_id > 0 {
+                    self.track_anchor(*anchor_id, mark);
+                    // For now, we can't store the node content as we don't have the full mapping yet
+                    // We'll store an empty mapping that will be populated later
+                    self.store_anchor_node(*anchor_id, Yaml::Hash(crate::yaml::Hash::new()));
+                }
+
                 PositionSpan::new(mark)
             }
             Event::MappingEnd => {
@@ -210,9 +220,18 @@ impl PositionTracker {
                     PositionSpan::new(mark)
                 }
             }
-            Event::SequenceStart(_, _) => {
+            Event::SequenceStart(anchor_id, _) => {
                 // For sequences, push the start position to the stack
                 self.push(1, mark);
+
+                // If this is also an anchor, track it
+                if *anchor_id > 0 {
+                    self.track_anchor(*anchor_id, mark);
+                    // For now, we can't store the node content as we don't have the full sequence yet
+                    // We'll store an empty sequence that will be populated later
+                    self.store_anchor_node(*anchor_id, Yaml::Array(Vec::new()));
+                }
+
                 PositionSpan::new(mark)
             }
             Event::SequenceEnd => {
@@ -225,21 +244,99 @@ impl PositionTracker {
                     PositionSpan::new(mark)
                 }
             }
-            Event::Alias(anchor_id) => {
-                // For aliases, create a span with just the current position
-                // but we could also look up the anchor position if needed
-                if let Some(_anchor_pos) = self.get_anchor_position(*anchor_id) {
-                    // If we have the anchor position, create a span from anchor to alias
-                    // This is optional and can be commented out if we only want the alias position
-                    // PositionSpan::with_end(anchor_pos, mark)
-                    PositionSpan::new(mark)
-                } else {
-                    PositionSpan::new(mark)
-                }
+            Event::Alias(_anchor_id) => {
+                // For aliases, we'll create a span with just the current position
+                // We could also look up the anchor position if needed
+                let span = PositionSpan::new(mark);
+
+                // We don't need to handle the node resolution here, as that's done
+                // in the loader. We just need to track the position.
+
+                span
             }
-            Event::Scalar(_, _, anchor_id, _) if *anchor_id > 0 => {
+            Event::Scalar(value, style, anchor_id, tag) if *anchor_id > 0 => {
                 // For scalars with anchors, track the anchor position
                 self.track_anchor(*anchor_id, mark);
+
+                // Store the node content based on the style and value
+                let node = if *style != TScalarStyle::Plain {
+                    // Non-plain scalars are always stored as strings
+                    Yaml::String(value.clone())
+                } else if tag.is_some() {
+                    // If there's a tag, we need to parse it according to the tag
+                    // This is a simplified version - in practice you'd need more logic
+                    if let Some(Tag {
+                        ref handle,
+                        ref suffix,
+                    }) = tag
+                    {
+                        if handle == "tag:yaml.org,2002:" {
+                            match suffix.as_ref() {
+                                "bool" => {
+                                    if let Ok(v) = value.parse::<bool>() {
+                                        Yaml::Boolean(v)
+                                    } else {
+                                        Yaml::BadValue
+                                    }
+                                }
+                                "int" => {
+                                    if let Ok(v) = value.parse::<i64>() {
+                                        Yaml::Integer(v)
+                                    } else {
+                                        Yaml::BadValue
+                                    }
+                                }
+                                "float" => Yaml::Real(value.clone()),
+                                "null" => {
+                                    if value == "~" || value == "null" {
+                                        Yaml::Null
+                                    } else {
+                                        Yaml::BadValue
+                                    }
+                                }
+                                _ => Yaml::String(value.clone()),
+                            }
+                        } else {
+                            Yaml::String(value.clone())
+                        }
+                    } else {
+                        // Fallback to string if tag parsing fails
+                        Yaml::String(value.clone())
+                    }
+                } else {
+                    // Try to convert the value based on its content (plain scalar)
+                    // This is a simplified version of Yaml::from_str
+                    if value == "~" || value == "null" {
+                        Yaml::Null
+                    } else if value == "true" {
+                        Yaml::Boolean(true)
+                    } else if value == "false" {
+                        Yaml::Boolean(false)
+                    } else if let Ok(i) = value.parse::<i64>() {
+                        Yaml::Integer(i)
+                    } else if value == ".inf"
+                        || value == ".Inf"
+                        || value == ".INF"
+                        || value == "+.inf"
+                        || value == "+.Inf"
+                        || value == "+.INF"
+                        || value == "-.inf"
+                        || value == "-.Inf"
+                        || value == "-.INF"
+                        || value == ".nan"
+                        || value == "NaN"
+                        || value == ".NAN"
+                        || value.parse::<f64>().is_ok()
+                    {
+                        Yaml::Real(value.clone())
+                    } else {
+                        Yaml::String(value.clone())
+                    }
+                };
+
+                // Store the node for this anchor
+                self.store_anchor_node(*anchor_id, node);
+
                 PositionSpan::new(mark)
             }
             _ => {

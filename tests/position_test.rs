@@ -285,3 +285,68 @@ fn test_anchor_positions() {
         // the basic functionality.
     }
 }
+
+/// Test that anchors of different node types are properly tracked
+#[test]
+fn test_complex_anchor_tracking() {
+    let yaml = "
+sequence: &seq_anchor [1, 2, 3]
+mapping: &map_anchor {key: value}
+nested:
+  - *seq_anchor
+  - *map_anchor";
+
+    let mut parser = Parser::new(yaml.chars());
+    let mut receiver = PositionTestReceiver::new();
+
+    let _ = parser.load_with_positions(&mut receiver, false);
+
+    // Find the sequence anchor event
+    let events = receiver.get_events();
+
+    // Find the sequence with anchor
+    let (seq_event, seq_span) = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::SequenceStart(anchor_id, _) if *anchor_id > 0))
+        .expect("Could not find sequence with anchor");
+
+    if let Event::SequenceStart(seq_anchor_id, _) = seq_event {
+        println!("Found sequence with anchor ID: {}", seq_anchor_id);
+        assert_eq!(seq_span.start.line(), 2);
+
+        // Find the alias referencing the sequence anchor
+        let (_alias_event, alias_span) = events
+            .iter()
+            .find(|(ev, _)| matches!(ev, Event::Alias(id) if *id == *seq_anchor_id))
+            .expect("Could not find alias referring to sequence anchor");
+
+        println!(
+            "Found alias to sequence on line: {}",
+            alias_span.start.line()
+        );
+        assert_eq!(alias_span.start.line(), 5);
+    }
+
+    // Find the mapping with anchor
+    let (map_event, map_span) = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::MappingStart(anchor_id, _, _) if *anchor_id > 0))
+        .expect("Could not find mapping with anchor");
+
+    if let Event::MappingStart(map_anchor_id, _, _) = map_event {
+        println!("Found mapping with anchor ID: {}", map_anchor_id);
+        assert_eq!(map_span.start.line(), 3);
+
+        // Find the alias referencing the mapping anchor
+        let (_alias_event, alias_span) = events
+            .iter()
+            .find(|(ev, _)| matches!(ev, Event::Alias(id) if *id == *map_anchor_id))
+            .expect("Could not find alias referring to mapping anchor");
+
+        println!(
+            "Found alias to mapping on line: {}",
+            alias_span.start.line()
+        );
+        assert_eq!(alias_span.start.line(), 6);
+    }
+}
