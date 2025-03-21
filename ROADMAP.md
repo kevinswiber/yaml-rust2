@@ -508,8 +508,42 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 
 ## Future Considerations
 
-- Tracking indentation levels more precisely
-- Capturing comments and their positions
-- Optimizing memory usage of position information
-- Implement source mapping capabilities for YAML documents
-- Add support for tracking positions in emitted YAML 
+### 1. Implement source mapping capabilities for YAML documents
+
+- Create a bidirectional mapping between YAML nodes and their source locations
+- Provide APIs to query positions for any node in the document hierarchy
+- Support looking up nodes by line/column position
+- Implement efficient traversal algorithms for large document trees
+- Add convenience methods for highlighting regions in editors
+
+### 2. Add support for tracking positions in emitted YAML
+
+- Extend `YamlEmitter` to track positions of emitted elements
+- Create position mappings between input nodes and output document
+- Preserve anchor/alias relationships in emitted documents
+- Add configuration options for controlling position precision
+- Support round-trip editing with position preservation
+
+### 3. Optimize memory usage of position information
+
+- Profile memory usage of current position tracking implementation
+- Implement arena allocation for position information
+- Add optional compression for position data
+- Provide configuration options to control position tracking granularity
+- Benchmark memory usage with different strategies
+
+### 4. Enhance tracking of indentation levels
+
+- Extend scanner to track indentation changes throughout the document
+- Associate indentation with block collections for more precise positioning
+- Improve position tracking for multi-line scalars
+- Add support for analyzing indentation inconsistencies
+- Provide better error messages for indentation-related issues
+
+### 5. Add support for capturing comments and their positions
+
+- Extend scanner to preserve comments during parsing
+- Create data structures to represent comments with positions
+- Add APIs to access comments associated with YAML nodes
+- Support for attaching comments to specific nodes
+- Preserve comments during document modifications 
