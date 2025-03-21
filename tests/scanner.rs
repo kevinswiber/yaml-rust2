@@ -111,7 +111,7 @@ fn test_a_flow_mapping() {
 ";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart(_));
+    next!(p, FlowMappingStart);
     next!(p, Key);
     next!(p, Scalar(TScalarStyle::Plain, _));
     next!(p, Value);
@@ -335,7 +335,7 @@ fn test_spec_ex7_3() {
 ";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart(_));
+    next!(p, FlowMappingStart);
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "foo");
     next!(p, Value);
@@ -357,7 +357,7 @@ fn test_plain_scalar_starting_with_indicators_in_flow() {
     let s = "{a: :b}";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart(_));
+    next!(p, FlowMappingStart);
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "a");
     next!(p, Value);
@@ -369,7 +369,7 @@ fn test_plain_scalar_starting_with_indicators_in_flow() {
     let s = "{a: ?b}";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart(_));
+    next!(p, FlowMappingStart);
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "a");
     next!(p, Value);
@@ -381,7 +381,7 @@ fn test_plain_scalar_starting_with_indicators_in_flow() {
     let s = "{a: -b}";
     let mut p = Scanner::new(s.chars());
     next!(p, StreamStart(..));
-    next!(p, FlowMappingStart(_));
+    next!(p, FlowMappingStart);
     next!(p, Key);
     next_scalar!(p, TScalarStyle::Plain, "a");
     next!(p, Value);

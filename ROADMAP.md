@@ -458,37 +458,24 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 
 ## Implementation Progress
 
-### Phase 1: Flow Collection Position Tracking - Completed ✓
+### Stage 1: Basic Position Tracking ✅
 
-We have successfully implemented Stage 1 of the implementation plan, which includes:
+- Added `PositionSpan` structure to represent start/end positions
+- Added `PositionTracker` to manage position spans for YAML constructs
+- Enhanced the `MarkedEventReceiver` trait to include position spans
+- Updated the Parser to track positions for YAML constructs
+- Added tests to verify position tracking functionality
 
-1. **Created Position Tracking Structures**:
-   - Defined `PositionSpan` struct to hold both start and end positions for YAML constructs
-   - Implemented methods like `new()`, `with_end()`, and `set_end()` for position span manipulation
-   - Created `PositionTracker` for maintaining state about open constructs
+### Stage 2: Remove flow_mapping_positions HashMap ✅
 
-2. **Enhanced Event Handling**:
-   - Added `on_positioned_event()` method to the `MarkedEventReceiver` trait with backward compatibility
-   - Created `PositionedParseResult` type for results that include position spans
-   - Added position-aware methods to the Parser
+- Removed the `flow_mapping_positions` HashMap from Scanner
+- Removed position_id parameter from TokenType::FlowMappingStart
+- Removed the `store_flow_mapping_position`, `get_flow_mapping_position`, and `flow_mapping_positions` methods
+- Removed position_id parameter from Event::MappingStart
+- Updated the Parser and MarkedLoader to use the new implementation
+- Updated tests to verify the new implementation
 
-3. **Improved Parser Flow Collection Handling**:
-   - Added a `position_tracker` field to the Parser to track the positions of open constructs
-   - Modified the parser to track the positions of flow mappings and sequences
-   - Updated `load_with_positions()` to use the enhanced position tracking
-
-4. **Created Test Suite for Position Tracking**:
-   - Implemented tests for flow mapping positions
-   - Implemented tests for flow sequence positions
-   - Implemented tests for nested flow collections
-
-The implementation now accurately tracks the positions of flow mappings and sequences, with the start position pointing to the opening delimiter (`{` or `[`) and the end position pointing to the closing delimiter (`}` or `]`). This satisfies two of the key position tracking requirements identified in the roadmap.
-
-### Next Steps
-
-1. **Continue with Stage 2**: Remove the flow mapping positions map from the scanner and update the `TokenType::FlowMappingStart` to no longer need an `Option<usize>` parameter
-2. **Enhance Block Collection Position Tracking**: Apply similar techniques for block mappings and sequences
-3. **Consolidate Position Tracking API**: Simplify the API and improve documentation
+### Stage 3: Remove anchor_map (in progress)
 
 ## Future Considerations
 

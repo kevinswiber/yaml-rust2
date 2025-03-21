@@ -151,7 +151,7 @@ impl EventReceiver for EventReporter {
             }
             Event::SequenceEnd => "-SEQ".into(),
 
-            Event::MappingStart(idx, tag, _, _) => {
+            Event::MappingStart(idx, tag, _) => {
                 format!("+MAP{}{}", format_index(idx), format_tag(&tag))
             }
             Event::MappingEnd => "-MAP".into(),

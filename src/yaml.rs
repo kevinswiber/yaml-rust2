@@ -167,7 +167,7 @@ impl YamlLoader {
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
-            Event::MappingStart(aid, _, _, _) => {
+            Event::MappingStart(aid, _, _) => {
                 let node = if aid > 0 {
                     if let Some(referenced_node) = self.anchor_map.get(&aid) {
                         // If it's an alias reference, clone the referenced node

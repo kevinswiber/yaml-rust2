@@ -62,6 +62,12 @@ pub struct Marker {
 }
 
 impl Marker {
+    /// Create a new marker at the specified position.
+    ///
+    /// # Parameters
+    /// - `index`: Byte index in the input string
+    /// - `line`: Line number (1-indexed)
+    /// - `col`: Column number (1-indexed)
     fn new(index: usize, line: usize, col: usize) -> Marker {
         Marker { index, line, col }
     }
@@ -187,10 +193,7 @@ pub enum TokenType {
     /// End of an inline array.
     FlowSequenceEnd,
     /// Start of an inline mapping (`{ a: b, c: d }`).
-    ///
-    /// The optional usize is the ID of the position where the opening brace was found.
-    /// This ID can be used to retrieve the exact position from the Scanner's flow_mapping_positions.
-    FlowMappingStart(Option<usize>),
+    FlowMappingStart,
     /// End of an inline mapping.
     FlowMappingEnd,
     /// An entry in a block sequence (c.f.: [`TokenType::BlockSequenceStart`]).
@@ -403,15 +406,6 @@ pub struct Scanner<T> {
     flow_mapping_started: bool,
     /// Whether we currently are in an implicit flow mapping.
     implicit_flow_mapping: bool,
-    /// Stores the exact position of flow mapping opening braces.
-    ///
-    /// When a flow mapping start token is created, we store the exact position
-    /// of the opening brace '{' here. This helps with accurate position tracking
-    /// for flow-style mappings. The key is a unique ID that will be attached to
-    /// the FlowMappingStart token, and the value is the marker position.
-    flow_mapping_positions: HashMap<usize, Marker>,
-    /// A counter to generate unique IDs for flow mapping positions.
-    flow_mapping_id_counter: usize,
 }
 
 impl<T: Iterator<Item = char>> Iterator for Scanner<T> {
@@ -464,8 +458,6 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             leading_whitespace: true,
             flow_mapping_started: false,
             implicit_flow_mapping: false,
-            flow_mapping_positions: HashMap::new(),
-            flow_mapping_id_counter: 0,
         }
     }
 
@@ -725,7 +717,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         let nc = self.buffer[1];
         match c {
             '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart),
-            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart(None)),
+            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart),
             ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd),
             '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd),
             ',' => self.fetch_flow_entry(),
@@ -1424,18 +1416,9 @@ impl<T: Iterator<Item = char>> Scanner<T> {
 
         let start_mark = self.mark;
 
-        // Store the exact position if this is a flow mapping start
-        let tok = match tok {
-            TokenType::FlowMappingStart(_) => {
-                let id = self.store_flow_mapping_position();
-                TokenType::FlowMappingStart(Some(id))
-            }
-            _ => tok,
-        };
-
         self.skip_non_blank();
 
-        if matches!(tok, TokenType::FlowMappingStart(_)) {
+        if matches!(tok, TokenType::FlowMappingStart) {
             self.flow_mapping_started = true;
         }
 
@@ -2383,7 +2366,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
                 }
                 self.insert_token(
                     sk.token_number - self.tokens_parsed,
-                    Token(self.mark, TokenType::FlowMappingStart(None)),
+                    Token(self.mark, TokenType::FlowMappingStart),
                 );
             }
 
@@ -2401,7 +2384,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         } else {
             if self.implicit_flow_mapping {
                 self.tokens
-                    .push_back(Token(self.mark, TokenType::FlowMappingStart(None)));
+                    .push_back(Token(self.mark, TokenType::FlowMappingStart));
             }
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
@@ -2569,34 +2552,6 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             self.flow_mapping_started = false;
             self.tokens
                 .push_back(Token(mark, TokenType::FlowMappingEnd));
-        }
-    }
-
-    /// Stores the current position as a flow mapping start position and returns an ID
-    fn store_flow_mapping_position(&mut self) -> usize {
-        let id = self.flow_mapping_id_counter;
-        self.flow_mapping_id_counter += 1;
-        self.flow_mapping_positions.insert(id, self.mark);
-        id
-    }
-
-    /// Get the position for a flow mapping start by its ID
-    ///
-    /// Returns the exact position of the opening brace `{` for a flow-style mapping
-    /// if the position_id is found.
-    pub fn get_flow_mapping_position(&self, id: usize) -> Option<Marker> {
-        self.flow_mapping_positions.get(&id).copied()
-    }
-
-    /// Get all flow mapping positions tracked by the scanner
-    ///
-    /// This can be used to enhance position tracking for flow-style mappings
-    /// by accessing the exact position of opening braces.
-    pub fn flow_mapping_positions(&self) -> Option<&HashMap<usize, Marker>> {
-        if self.flow_mapping_positions.is_empty() {
-            None
-        } else {
-            Some(&self.flow_mapping_positions)
         }
     }
 }

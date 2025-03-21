@@ -46,8 +46,8 @@ fn test_flow_mapping_positions() {
     // Find the MappingStart and MappingEnd events
     let mapping_start = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::MappingStart(_, _, _, _)))
-        .unwrap();
+        .find(|(ev, _)| matches!(ev, Event::MappingStart(_, _, _)))
+        .expect("Failed to find MappingStart event");
 
     let mapping_end = events
         .iter()
@@ -147,10 +147,10 @@ fn test_nested_flow_positions() {
     }
 
     // We should find multiple MappingStart and SequenceEnd events
-    let mapping_starts: Vec<_> = events
+    let mapping_starts = events
         .iter()
-        .filter(|(ev, _)| matches!(ev, Event::MappingStart(_, _, _, _)))
-        .collect();
+        .filter(|(ev, _)| matches!(ev, Event::MappingStart(_, _, _)))
+        .collect::<Vec<_>>();
 
     let sequence_starts: Vec<_> = events
         .iter()
