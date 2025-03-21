@@ -54,7 +54,7 @@ let node = source_map.get_node(node_id).unwrap();
 let location = source_map.get_location(node_id).unwrap();
 
 println!("Found node at line {}, column {}: {:?}", 
-         location.start_line(), location.start_column(), node);
+         location.span.start.line(), location.span.start.col(), node);
 ```
 
 ## Working with Source Maps
@@ -106,11 +106,37 @@ Once you have a node ID, you can get its source location:
 ```rust
 if let Some(location) = source_map.get_location(node_id) {
     println!("Node starts at line {}, column {}", 
-             location.start_line(), location.start_column());
+             location.span.start.line(), location.span.start.col());
     
-    if let Some(end_line) = location.end_line() {
+    // End positions are now available for all node types
+    if let Some(end) = location.span.end {
         println!("Node ends at line {}, column {}", 
-                 end_line, location.end_column().unwrap());
+                 end.line(), end.col());
+    }
+}
+```
+
+### Finding Nodes by Path
+
+The source map supports looking up nodes based on their path, and includes robust comparison logic to find the correct node even when accessed via path navigation:
+
+```rust
+use yaml_rust2::source_map_utils::YamlWithSourceMap;
+
+// Parse YAML and create source map
+let yaml_with_map = YamlWithSourceMap::parse(yaml_str).unwrap();
+
+// Find a node by path
+if let Some(node) = yaml_with_map.find_node_by_path(&["key2", "1"]) {
+    println!("Found node: {:?}", node);
+    
+    // Get position information
+    if let Some(location) = yaml_with_map.get_node_location(node) {
+        println!("Position: ({},{}) to ({},{})", 
+                 location.span.start.line(), 
+                 location.span.start.col(),
+                 location.span.end.map_or(0, |m| m.line()),
+                 location.span.end.map_or(0, |m| m.col()));
     }
 }
 ```
@@ -140,6 +166,59 @@ let reference_node = source_map.get_node(reference_id).unwrap();
 // Both nodes will refer to the same value
 assert_eq!(anchored_node, reference_node);
 ```
+
+## Enhanced Source Mapping Utilities
+
+The `source_map_utils` module provides higher-level utilities for working with source maps:
+
+```rust
+use yaml_rust2::source_map_utils::YamlWithSourceMap;
+
+// Parse YAML document with source mapping
+let yaml_with_map = YamlWithSourceMap::parse(yaml_str).unwrap();
+
+// Find nodes at specific paths
+let server_config = yaml_with_map.find_node_by_path(&["config", "server"]);
+
+// Get position information
+if let Some(node) = server_config {
+    if let Some(location) = yaml_with_map.get_node_location(node) {
+        println!("Server config at ({},{}) to ({},{})",
+            location.span.start.line(),
+            location.span.start.col(),
+            location.span.end.map_or(0, |m| m.line()),
+            location.span.end.map_or(0, |m| m.col()));
+    }
+}
+
+// Find nodes by position
+let node_at_position = yaml_with_map.find_node_at_position(5, 10);
+
+// Find nodes in a range
+let nodes_in_range = yaml_with_map.find_nodes_in_range(5, 1, 10, 20);
+```
+
+### Node Content Comparison
+
+The source mapping implementation includes a robust deep comparison function (`equal_yaml_content`) that compares YAML nodes by content rather than reference. This is particularly useful when looking up nodes by path:
+
+```rust
+use yaml_rust2::source_map_utils::equal_yaml_content;
+
+// Access a node through different paths
+let node1 = &doc["config"]["server"];
+let node2 = find_node_by_path(&doc, &["config", "server"]);
+
+// Deep comparison will match these nodes even though they're different references
+if let Some(n2) = node2 {
+    assert!(equal_yaml_content(node1, n2));
+}
+```
+
+The comparison handles all YAML node types including:
+- Scalar values (strings, integers, floats, booleans)
+- Collections (hash maps and arrays) with deep comparison
+- Anchors and aliases
 
 ## Advanced Usage
 
@@ -174,8 +253,12 @@ for id in node_ids {
     let location = source_map.get_location(id).unwrap();
     
     // Process node and location
-    println!("Node at line {}, column {}: {:?}", 
-             location.start_line(), location.start_column(), node);
+    println!("Node at position ({},{}) to ({},{}): {:?}", 
+             location.span.start.line(), 
+             location.span.start.col(),
+             location.span.end.map_or(0, |m| m.line()),
+             location.span.end.map_or(0, |m| m.col()),
+             node);
 }
 ```
 
@@ -189,5 +272,4 @@ The lookup operations (`find_node_at_position`, `get_node`, `get_location`) are 
 
 - Source mapping works best with the `PositionTrackedLoader`, which is enabled by the `position_tracked_loader` feature.
 - Position information is most accurate for nodes that have anchor IDs or are part of flow collections.
-- For some node types, only the start position might be available, not the end position.
 - Byte offset information is optional and might not always be available. 

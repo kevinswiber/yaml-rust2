@@ -42,6 +42,8 @@ The implementation now:
 - Includes tests that verify automatic position tracking works correctly
 - Preserves backward compatibility with existing position tracking functionality
 - Ensures end positions are properly tracked for all node types
+- Provides accurate end position tracking for all YAML constructs including scalars, blocks, and flow collections
+- Implements deep YAML content comparison to improve node lookup when using paths
 
 The enhancements provide:
 - More accurate source mapping with complete position information 
@@ -273,7 +275,7 @@ Based on the analysis above, we've established the following concrete requiremen
 
 This section outlines a step-by-step implementation plan for adding accurate position tracking for flow mappings and flow sequences. We'll take an incremental approach that considers all three components: scanner, parser, and loader.
 
-### Stage 1: Define Position Structures (yaml-rust2)
+### Stage 1: Define Position Structures (COMPLETED)
 
 1. **Create `PositionSpan` Structure**:
    ```rust
@@ -329,7 +331,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
    }
    ```
 
-### Stage 2: Update Scanner Implementation (yaml-rust2)
+### Stage 2: Update Scanner Implementation (COMPLETED)
 
 1. **Remove Flow Mapping Positions Map**:
    - Remove `flow_mapping_positions` HashMap 
@@ -367,6 +369,8 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Enhanced the `find_node_by_path` function in tests to properly identify nodes based on content
 - All automatic position tracking tests now pass successfully
 - The system now supports position tracking for all YAML constructs including block and flow collections, scalars, and nested structures
+- Enhanced end position tracking to ensure accurate positions for all node types
+- Implemented deep YAML content comparison to improve node lookups for complex structures
 
 ### Stage 4: Remove anchor_map (COMPLETED)
 
@@ -389,13 +393,23 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - [x] Create comprehensive examples showing loader usage
 - [x] Verify all tests pass with both loader implementations
 - [x] Complete user guide with position tracking examples
+- [x] Update examples to demonstrate end position tracking in action
+- [x] Ensure error handling properly utilizes position information
 
 ## Future Considerations
 
-### 1. Source Mapping API Refinements
-- [ ] Expose concise, user-friendly API for source map queries
-- [ ] Add position helpers for specific use cases (e.g., error reporting)
-- [ ] Add documentation and examples for common source mapping scenarios
+### 1. Source Mapping API Refinements (COMPLETED)
+- [x] Expose concise, user-friendly API for source map queries
+- [x] Add position helpers for specific use cases (e.g., error reporting)
+- [x] Add documentation and examples for common source mapping scenarios
+
+The implementation includes:
+- A new `source_map_utils` module with high-level APIs for source map interaction
+- The `YamlWithSourceMap` struct that simplifies working with YAML documents and their source maps
+- Helper functions for node discovery, position formatting, and error reporting
+- A comprehensive example demonstrating the enhanced API's capabilities
+- Utilities for node type identification and content previews
+- Improved YAML content comparison to ensure node lookups work correctly even with complex structures
 
 ### 2. Performance Optimizations
 - [ ] Benchmark source mapping overhead
@@ -450,4 +464,4 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - [ ] Create data structures to represent comments with positions
 - [ ] Add APIs to access comments associated with YAML nodes
 - [ ] Support for attaching comments to specific nodes
-- [ ] Preserve comments during document modifications 
+- [ ] Preserve comments during document modifications

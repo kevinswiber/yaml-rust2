@@ -101,6 +101,8 @@ pub mod position;
 pub mod scanner;
 #[cfg(feature = "source_mapping")]
 pub mod source_map;
+#[cfg(feature = "source_mapping")]
+pub mod source_map_utils;
 pub mod yaml;
 
 // reexport key APIs
@@ -111,6 +113,11 @@ pub use crate::scanner::ScanError;
 #[cfg(feature = "source_mapping")]
 pub use crate::source_map::{
     NodeId, SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport,
+};
+#[cfg(feature = "source_mapping")]
+pub use crate::source_map_utils::{
+    node_preview, node_type_name, parse_yaml_file_with_source_map, parse_yaml_with_source_map,
+    YamlWithSourceMap,
 };
 pub use crate::yaml::loader::{load_from_iter, load_from_str};
 pub use crate::yaml::{PositionTrackedLoader, Yaml, YamlLoader};

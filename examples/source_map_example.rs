@@ -23,16 +23,17 @@ use yaml_rust2::parser::Parser;
 use yaml_rust2::position::PositionSpan;
 use yaml_rust2::scanner::Marker;
 use yaml_rust2::source_map::{SourceMap, SourceMapBuilder, SourceMapSupport};
+use yaml_rust2::source_map_utils::YamlWithSourceMap;
 use yaml_rust2::{PositionTrackedLoader, Yaml};
 
 // The example main function
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== YAML Source Mapping Example ===\n");
 
     // Example 1: Automatic source mapping with position tracking
     automatic_source_mapping_example()?;
 
-    // Example 2: Non-anchored node position tracking
+    // Example 2: Non-anchored node tracking
     non_anchored_node_tracking_example()?;
 
     // Example 3: Manual source mapping demonstration
@@ -40,6 +41,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 4: Error reporting with source mapping
     error_reporting_example()?;
+
+    // Example 5: Using the enhanced source mapping utilities API
+    source_map_utils_example()?;
 
     Ok(())
 }
@@ -480,6 +484,156 @@ config:
     Ok(())
 }
 
+fn source_map_utils_example() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== Enhanced Source Mapping API ===");
+
+    let yaml_str = r#"
+database:
+  host: localhost
+  port: 5432
+  credentials:
+    username: admin
+    password: secure123
+server:
+  host: 0.0.0.0
+  port: 8080
+  debug: true
+"#;
+
+    // Parse with automatic source mapping
+    let yaml_with_map = YamlWithSourceMap::parse(yaml_str).unwrap();
+
+    // Print document overview
+    println!("Document Overview:");
+    println!("  Root: {:?}", yaml_with_map.document);
+    println!("  Source Map: {} nodes", yaml_with_map.source_map.len());
+
+    // Find and validate database configuration
+    if let Some(db_config) = yaml_with_map.find_node_by_path(&["database"]) {
+        println!("\nFound database config: {:?}", db_config);
+
+        // Get position for database config
+        if let Some(location) = yaml_with_map.get_node_location(db_config) {
+            let end_line = location.span.end.map_or(0, |m| m.line());
+            let end_col = location.span.end.map_or(0, |m| m.col());
+
+            println!(
+                "  Position: ({}:{}) to ({}:{})",
+                location.span.start.line(),
+                location.span.start.col(),
+                end_line,
+                end_col
+            );
+
+            if location.span.end.is_none() {
+                println!("  Note: End position is not set");
+            }
+        } else {
+            println!("  Position: unknown position");
+        }
+
+        // Validate database configuration
+        let validation_errors = validate_db_config(db_config);
+        if !validation_errors.is_empty() {
+            println!("\nValidation Errors:");
+            for error in validation_errors {
+                // Format error with source context
+                let error_context = yaml_with_map.format_error(db_config, &error);
+                println!("{}", error_context);
+            }
+        }
+    }
+
+    // Find and validate server configuration
+    if let Some(server_config) = yaml_with_map.find_node_by_path(&["server"]) {
+        println!("\nFound server config: {:?}", server_config);
+
+        // Get position for server config
+        if let Some(location) = yaml_with_map.get_node_location(server_config) {
+            let end_line = location.span.end.map_or(0, |m| m.line());
+            let end_col = location.span.end.map_or(0, |m| m.col());
+
+            println!(
+                "  Server position: ({}:{}) to ({}:{})",
+                location.span.start.line(),
+                location.span.start.col(),
+                end_line,
+                end_col
+            );
+
+            if location.span.end.is_none() {
+                println!("  Note: End position is not set");
+            }
+        } else {
+            println!("  Server position: unknown");
+        }
+
+        // Check each field in server config
+        if let Yaml::Hash(ref hash) = server_config {
+            println!("\nServer configuration fields with start and end positions:");
+            for (key, value) in hash {
+                if let Yaml::String(ref key_str) = key {
+                    println!("  Field: {}", key_str);
+                    if let Some(location) = yaml_with_map.get_node_location(value) {
+                        let end_line = location.span.end.map_or(0, |m| m.line());
+                        let end_col = location.span.end.map_or(0, |m| m.col());
+
+                        println!(
+                            "    Position: ({}:{}) to ({}:{})",
+                            location.span.start.line(),
+                            location.span.start.col(),
+                            end_line,
+                            end_col
+                        );
+
+                        if location.span.end.is_none() {
+                            println!("    Note: End position is not set");
+                        }
+                    } else {
+                        println!("    Position: unknown");
+                    }
+                }
+            }
+        }
+    }
+
+    // Demonstrate finding nodes by position
+    println!("\nFinding nodes by position:");
+    let node = yaml_with_map.find_node_at_position(11, 10); // Approximate position of server port
+    if let Some(node) = node {
+        println!("  Found node at position (11, 10): {:?}", node);
+        if let Some(location) = yaml_with_map.get_node_location(node) {
+            let end_line = location.span.end.map_or(0, |m| m.line());
+            let end_col = location.span.end.map_or(0, |m| m.col());
+
+            println!(
+                "  Full position: ({}:{}) to ({}:{})",
+                location.span.start.line(),
+                location.span.start.col(),
+                end_line,
+                end_col
+            );
+
+            if location.span.end.is_none() {
+                println!("  Note: End position is not set");
+            }
+        }
+    }
+
+    // Demonstrate finding nodes in range
+    println!("\nFinding nodes in range:");
+    let nodes_in_range = yaml_with_map.find_nodes_in_range(10, 1, 12, 20);
+    println!(
+        "  Found {} nodes in range (10, 1) - (12, 20)",
+        nodes_in_range.len()
+    );
+    for node in nodes_in_range.iter().take(3) {
+        println!("  - {:?}", node);
+    }
+
+    Ok(())
+}
+
 // Helper function to print source map information
 fn print_source_map_info(source_map: &SourceMap<Yaml>) {
     let node_ids = source_map.get_all_node_ids();
@@ -565,10 +719,40 @@ fn equal_yaml_content(a: &Yaml, b: &Yaml) -> bool {
         (Yaml::Real(a), Yaml::Real(b)) => a == b,
         (Yaml::Boolean(a), Yaml::Boolean(b)) => a == b,
         (Yaml::Null, Yaml::Null) => true,
-        // For hash and array, we'd need to check each element
-        (Yaml::Hash(_), Yaml::Hash(_)) | (Yaml::Array(_), Yaml::Array(_)) => {
-            // For this example, check if references are equal
-            std::ptr::eq(a as *const _, b as *const _)
+        (Yaml::BadValue, Yaml::BadValue) => true,
+        (Yaml::Alias(a), Yaml::Alias(b)) => a == b,
+        (Yaml::Hash(a), Yaml::Hash(b)) => {
+            // For deeper comparison, check size, then compare keys and values
+            if a.len() != b.len() {
+                return false;
+            }
+
+            // Try to compare by content
+            for (key, value_a) in a {
+                match b.get(key) {
+                    Some(value_b) => {
+                        if !equal_yaml_content(value_a, value_b) {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            true
+        }
+        (Yaml::Array(a), Yaml::Array(b)) => {
+            // Check size first
+            if a.len() != b.len() {
+                return false;
+            }
+
+            // Compare elements one by one
+            for (item_a, item_b) in a.iter().zip(b.iter()) {
+                if !equal_yaml_content(item_a, item_b) {
+                    return false;
+                }
+            }
+            true
         }
         _ => false,
     }
@@ -659,4 +843,51 @@ fn print_yaml_structure(yaml: &Yaml, indent: usize) {
         Yaml::BadValue => println!("{}BadValue", indent_str),
         Yaml::Alias(anchor_id) => println!("{}Alias to anchor {}", indent_str, anchor_id),
     }
+}
+
+/// Validates database configuration and returns any errors found
+fn validate_db_config(db_config: &Yaml) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    // Check for required fields
+    if let Yaml::Hash(ref hash) = db_config {
+        // Check for required host field
+        if !hash
+            .iter()
+            .any(|(k, _)| matches!(k, Yaml::String(s) if s == "host"))
+        {
+            errors.push("Database configuration is missing required 'host' field".to_string());
+        }
+
+        // Check for required port field
+        if !hash
+            .iter()
+            .any(|(k, _)| matches!(k, Yaml::String(s) if s == "port"))
+        {
+            errors.push("Database configuration is missing required 'port' field".to_string());
+        }
+
+        // Check for required username in credentials
+        if let Some(credentials) = hash
+            .iter()
+            .find(|(k, _)| matches!(k, Yaml::String(s) if s == "credentials"))
+            .map(|(_, v)| v)
+        {
+            if let Yaml::Hash(ref cred_hash) = credentials {
+                if !cred_hash
+                    .iter()
+                    .any(|(k, _)| matches!(k, Yaml::String(s) if s == "username"))
+                {
+                    errors.push(
+                        "Database credentials is missing required 'username' field".to_string(),
+                    );
+                }
+            }
+        } else {
+            errors
+                .push("Database configuration is missing required 'credentials' field".to_string());
+        }
+    }
+
+    errors
 }
