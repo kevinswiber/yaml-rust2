@@ -99,6 +99,8 @@ pub struct PositionTracker {
     node_positions: std::collections::HashMap<usize, Marker>,
     /// Map of node content hash to node ID
     node_content_hash_map: std::collections::HashMap<u64, usize>,
+    /// Map of node path to node ID for tracking non-anchored nodes
+    node_path_map: std::collections::HashMap<String, usize>,
     /// Counter for generating unique node IDs
     next_node_id: usize,
 }
@@ -113,6 +115,7 @@ impl PositionTracker {
             anchor_nodes: std::collections::HashMap::new(),
             node_positions: std::collections::HashMap::new(),
             node_content_hash_map: std::collections::HashMap::new(),
+            node_path_map: std::collections::HashMap::new(),
             next_node_id: 1, // Start from 1
         }
     }
@@ -613,28 +616,73 @@ impl PositionTracker {
         None
     }
 
-    /// Store a path reference for a node
+    /// Track a node by its path in the YAML document
     ///
-    /// This method stores a path (like "document.basic_types.integer") for a node,
-    /// which helps with identifying nodes by their logical path in the document.
+    /// This method stores the position of a node identified by its path,
+    /// which provides a way to track non-anchored nodes.
     ///
     /// # Arguments
     ///
-    /// * `path` - A string path identifying the node's location in the document
-    /// * `position` - The position of the node
+    /// * `path` - A string representing the path to the node (e.g., "root.key1.key2")
+    /// * `position` - The marker position of the node
     ///
     /// # Returns
     ///
     /// A unique ID for the tracked node
     pub fn track_node_with_path(&mut self, path: &str, position: Marker) -> usize {
-        let node_id = self.track_node_position(position);
-        // Use the path as part of the content hash
-        use std::hash::{Hash, Hasher};
-        let mut path_hash = std::collections::hash_map::DefaultHasher::new();
-        path.hash(&mut path_hash);
-        self.node_content_hash_map
-            .insert(path_hash.finish(), node_id);
+        let node_id = match self.node_path_map.get(path) {
+            Some(&id) => id,
+            None => {
+                let id = self.next_node_id;
+                self.next_node_id += 1;
+                self.node_path_map.insert(path.to_owned(), id);
+                id
+            }
+        };
+
+        self.node_positions.insert(node_id, position);
         node_id
+    }
+
+    /// Get a node position by its path
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A string representing the path to the node (e.g., "root.key1.key2")
+    ///
+    /// # Returns
+    ///
+    /// The marker position of the node if found
+    #[must_use]
+    pub fn get_position_by_path(&self, path: &str) -> Option<Marker> {
+        self.node_path_map
+            .get(path)
+            .and_then(|id| self.node_positions.get(id))
+            .copied()
+    }
+
+    /// Get all node paths that have been tracked
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all node paths and their IDs
+    #[must_use]
+    pub fn get_all_node_paths(&self) -> impl Iterator<Item = (&String, &usize)> {
+        self.node_path_map.iter()
+    }
+
+    /// Get all node positions by path
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all node paths and their positions
+    #[must_use]
+    pub fn get_all_node_positions_by_path(&self) -> impl Iterator<Item = (&String, Marker)> + '_ {
+        self.node_path_map.iter().filter_map(|(path, id)| {
+            self.node_positions
+                .get(id)
+                .map(|&position| (path, position))
+        })
     }
 }
 

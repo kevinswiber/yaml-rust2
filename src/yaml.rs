@@ -1163,7 +1163,22 @@ impl PositionTrackedLoader {
         id
     }
 
+    /// Track the current node with its path
+    ///
+    /// This method constructs a node path from the current stack and registers it with the position tracker
+    fn track_current_node_position(&mut self, mark: Marker) -> usize {
+        // Use a simple path format to avoid string manipulation complexity
+        let path = format!("doc{}.node{}", self.docs.len(), self.position_tracker.len());
+        self.position_tracker.track_node_with_path(&path, mark)
+    }
+
     fn on_event_impl(&mut self, ev: Event, mark: Marker) -> Result<(), ScanError> {
+        // Track positions for all nodes, not just anchored ones
+        let _node_id = self.track_current_node_position(mark);
+
+        // Process the event using the position tracker
+        let _span = self.position_tracker.process_event(&ev, mark);
+
         match ev {
             Event::DocumentStart | Event::Nothing | Event::StreamStart | Event::StreamEnd => {
                 // do nothing
@@ -1177,11 +1192,6 @@ impl PositionTrackedLoader {
                 }
             }
             Event::SequenceStart(aid, _) => {
-                // Track the sequence start in the position tracker
-                let _span = self
-                    .position_tracker
-                    .process_event(&Event::SequenceStart(aid, None), mark);
-
                 self.doc_stack.push((Yaml::Array(Vec::new()), aid));
 
                 // If this is an anchor, store it in position_tracker
@@ -1192,19 +1202,10 @@ impl PositionTrackedLoader {
                 }
             }
             Event::SequenceEnd => {
-                // Track the sequence end in the position tracker
-                self.position_tracker
-                    .process_event(&Event::SequenceEnd, mark);
-
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
             Event::MappingStart(aid, _, _) => {
-                // Track the mapping start in the position tracker
-                let _span = self
-                    .position_tracker
-                    .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
-
                 let node = if aid > 0 {
                     if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
                         // If it's an alias reference, get the referenced node from position_tracker
@@ -1230,10 +1231,6 @@ impl PositionTrackedLoader {
                 }
             }
             Event::MappingEnd => {
-                // Track the mapping end in the position tracker
-                self.position_tracker
-                    .process_event(&Event::MappingEnd, mark);
-
                 self.key_stack.pop().unwrap();
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
