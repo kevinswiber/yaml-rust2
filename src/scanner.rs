@@ -51,41 +51,34 @@ pub enum TMappingStyle {
 }
 
 /// A location in a yaml document.
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Marker {
-    /// The index (in chars) in the input string.
-    index: usize,
-    /// The line (1-indexed).
-    line: usize,
-    /// The column (1-indexed).
-    col: usize,
+    pub(crate) index: usize,
+    pub(crate) line: usize,
+    pub(crate) col: usize,
 }
 
 impl Marker {
-    /// Create a new marker at the specified position.
-    ///
-    /// # Parameters
-    /// - `index`: Byte index in the input string
-    /// - `line`: Line number (1-indexed)
-    /// - `col`: Column number (1-indexed)
-    fn new(index: usize, line: usize, col: usize) -> Marker {
+    /// Create a marker
+    pub(crate) fn new(index: usize, line: usize, col: usize) -> Marker {
         Marker { index, line, col }
     }
 
-    /// Return the index (in bytes) of the marker in the source.
-    #[must_use]
-    pub fn index(&self) -> usize {
-        self.index
+    /// Create a marker for testing purposes
+    #[cfg(test)]
+    pub fn for_testing(line: usize, col: usize) -> Marker {
+        // Approximate the index based on line and column
+        // This is a simplification for testing only
+        let index = (line - 1) * 80 + (col - 1);
+        Marker { index, line, col }
     }
 
-    /// Return the line of the marker in the source.
-    #[must_use]
+    /// Line number of the Marker
     pub fn line(&self) -> usize {
         self.line
     }
 
-    /// Return the column of the marker in the source.
-    #[must_use]
+    /// Column number of the Marker
     pub fn col(&self) -> usize {
         self.col
     }

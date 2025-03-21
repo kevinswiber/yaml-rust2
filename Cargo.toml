@@ -19,6 +19,7 @@ default = ["encoding"]
 debug_prints = []
 encoding = ["dep:encoding_rs"]
 position_tracked_loader = []
+source_mapping = ["position_tracked_loader"]
 
 [dependencies]
 arraydeque = "0.5.1"

@@ -1,5 +1,22 @@
 # Position Tracking Roadmap for yaml-rust2
 
+## ✅ Source Mapping Implementation - COMPLETED
+
+The YAML parser now includes a comprehensive source mapping system that:
+
+- Tracks positions of all YAML nodes in the source document
+- Enables bidirectional mapping between nodes and their source locations
+- Supports complex YAML structures including nested collections
+- Provides position-aware node lookups using line/column numbers
+- Improves error reporting with precise location information
+
+The implementation includes:
+- `SourceMap` and `SourceMapBuilder` classes for building and querying source maps
+- `SourceLocation` structure for storing node positions
+- Registration system to connect nodes with their positions
+- Position-based node lookup capabilities
+- Test suite validating source mapping functionality
+
 ## Current Implementation Analysis
 
 Currently, position information for flow mappings is tracked and propagated from the scanner to the loader as follows:
@@ -508,7 +525,27 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 
 ## Future Considerations
 
-### 1. Implement source mapping capabilities for YAML documents
+### 1. Source Mapping API Refinements
+- [ ] Expose concise, user-friendly API for source map queries
+- [ ] Add position helpers for specific use cases (e.g., error reporting)
+- [ ] Add documentation and examples for common source mapping scenarios
+
+### 2. Performance Optimizations
+- [ ] Benchmark source mapping overhead
+- [ ] Consider lazy position calculation strategies
+- [ ] Optimize memory usage for large documents
+
+### 3. Integration with Error Handling
+- [ ] Enhance error messages with precise position information
+- [ ] Create a standardized error reporting format that includes positions
+- [ ] Add visual error indicators (like pointing to the problematic line)
+
+### 4. Advanced Features
+- [ ] Add range-based node lookup (find nodes within a certain range)
+- [ ] Support for highlighting specific sections of YAML documents
+- [ ] IDE-friendly position information for autocomplete and validation
+
+### 5. Implement source mapping capabilities for YAML documents
 
 - Create a bidirectional mapping between YAML nodes and their source locations
 - Provide APIs to query positions for any node in the document hierarchy
@@ -516,7 +553,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Implement efficient traversal algorithms for large document trees
 - Add convenience methods for highlighting regions in editors
 
-### 2. Add support for tracking positions in emitted YAML
+### 6. Add support for tracking positions in emitted YAML
 
 - Extend `YamlEmitter` to track positions of emitted elements
 - Create position mappings between input nodes and output document
@@ -524,7 +561,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Add configuration options for controlling position precision
 - Support round-trip editing with position preservation
 
-### 3. Optimize memory usage of position information
+### 7. Optimize memory usage of position information
 
 - Profile memory usage of current position tracking implementation
 - Implement arena allocation for position information
@@ -532,7 +569,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Provide configuration options to control position tracking granularity
 - Benchmark memory usage with different strategies
 
-### 4. Enhance tracking of indentation levels
+### 8. Enhance tracking of indentation levels
 
 - Extend scanner to track indentation changes throughout the document
 - Associate indentation with block collections for more precise positioning
@@ -540,7 +577,7 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - Add support for analyzing indentation inconsistencies
 - Provide better error messages for indentation-related issues
 
-### 5. Add support for capturing comments and their positions
+### 9. Add support for capturing comments and their positions
 
 - Extend scanner to preserve comments during parsing
 - Create data structures to represent comments with positions

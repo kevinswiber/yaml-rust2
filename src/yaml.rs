@@ -4,7 +4,9 @@
 
 use std::borrow::Cow;
 use std::ops::ControlFlow;
-use std::{collections::BTreeMap, convert::TryFrom, mem, ops::Index, ops::IndexMut};
+use std::{
+    collections::BTreeMap, collections::HashMap, convert::TryFrom, mem, ops::Index, ops::IndexMut,
+};
 
 #[cfg(feature = "encoding")]
 use encoding_rs::{Decoder, DecoderResult, Encoding};
@@ -1557,3 +1559,103 @@ pub mod loader {
 
 // Re-export the loader functions for ease of use
 pub use self::loader::{load_from_iter, load_from_str};
+
+#[cfg(feature = "source_mapping")]
+impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
+    fn build_source_maps(&self) -> Vec<crate::source_map::SourceMap<Yaml>> {
+        let docs = self.documents();
+        docs.iter()
+            .enumerate()
+            .map(|(i, _)| self.build_source_map_for_document(i).unwrap_or_default())
+            .collect()
+    }
+
+    fn build_source_map_for_document(
+        &self,
+        document_index: usize,
+    ) -> Option<crate::source_map::SourceMap<Yaml>> {
+        let docs = self.documents();
+        let document = docs.get(document_index)?;
+
+        // Create a builder for the source map
+        let mut builder = crate::source_map::SourceMapBuilder::new();
+
+        // Traverse the document tree and build a mapping of nodes to position spans
+        let mut node_spans = HashMap::new();
+        self.collect_position_spans(document, &mut node_spans);
+
+        // Build the source map using the collected spans
+        Some(builder.build(document, &node_spans))
+    }
+}
+
+#[cfg(feature = "source_mapping")]
+impl PositionTrackedLoader {
+    /// Collect position spans for all nodes in a YAML document.
+    ///
+    /// This method recursively traverses the document tree and builds a mapping
+    /// of node pointers to their position spans. This is used internally by the
+    /// source map builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The root node to start collecting from
+    /// * `spans` - A mutable reference to a map that will be populated with node spans
+    fn collect_position_spans(
+        &self,
+        node: &Yaml,
+        spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
+    ) {
+        let tracker = self.position_tracker();
+
+        match node {
+            Yaml::Array(array) => {
+                // For arrays, first collect the span for the array itself
+                if let Some(anchor_id) = tracker.find_anchor_id(node) {
+                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                        // If we have an anchor position, use it as the start
+                        let span = crate::position::PositionSpan::new(pos);
+                        spans.insert(node as *const Yaml, span);
+                    }
+                }
+
+                // Then recursively collect spans for each item
+                for item in array {
+                    self.collect_position_spans(item, spans);
+                }
+            }
+            Yaml::Hash(hash) => {
+                // For hashes, first collect the span for the hash itself
+                if let Some(anchor_id) = tracker.find_anchor_id(node) {
+                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                        // If we have an anchor position, use it as the start
+                        let span = crate::position::PositionSpan::new(pos);
+                        spans.insert(node as *const Yaml, span);
+                    }
+                }
+
+                // Then recursively collect spans for each key and value
+                for (key, value) in hash {
+                    self.collect_position_spans(key, spans);
+                    self.collect_position_spans(value, spans);
+                }
+            }
+            Yaml::Alias(anchor_id) => {
+                // For aliases, use the position of the alias reference
+                if let Some(pos) = tracker.get_anchor_position(*anchor_id) {
+                    let span = crate::position::PositionSpan::new(pos);
+                    spans.insert(node as *const Yaml, span);
+                }
+            }
+            _ => {
+                // For scalar values, check if there's an anchor
+                if let Some(anchor_id) = tracker.find_anchor_id(node) {
+                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                        let span = crate::position::PositionSpan::new(pos);
+                        spans.insert(node as *const Yaml, span);
+                    }
+                }
+            }
+        }
+    }
+}
