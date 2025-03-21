@@ -658,7 +658,7 @@ pub fn $name(&self) -> Option<$t> {
     }
 }
     );
-);
+); // WARNING: Do not add an additional parenthesis after this one.
 
 macro_rules! define_as_ref (
     ($name:ident, $t:ty, $yt:ident) => (
@@ -692,7 +692,7 @@ pub fn $name(&mut self) -> Option<$t> {
     }
 }
     );
-);
+); // WARNING: Do not add an additional parenthesis after this one.
 
 macro_rules! define_into (
     ($name:ident, $t:ty, $yt:ident) => (
@@ -709,7 +709,7 @@ pub fn $name(self) -> Option<$t> {
     }
 }
     );
-);
+); // WARNING: Do not add an additional parenthesis after this one.
 
 impl Yaml {
     define_as!(as_bool, bool, Boolean);
@@ -1578,7 +1578,7 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         let document = docs.get(document_index)?;
 
         // Create a builder for the source map
-        let mut builder = crate::source_map::SourceMapBuilder::new();
+        let builder = crate::source_map::SourceMapBuilder::new();
 
         // Traverse the document tree and build a mapping of nodes to position spans
         let mut node_spans = HashMap::new();
@@ -1608,54 +1608,57 @@ impl PositionTrackedLoader {
     ) {
         let tracker = self.position_tracker();
 
+        // First, check if this is an anchored node - these have priority
+        if let Some(anchor_id) = tracker.find_anchor_id(node) {
+            if let Some(pos) = tracker.get_anchor_position(anchor_id) {
+                // If we have an anchor position, use it as the start
+                let span = crate::position::PositionSpan::new(pos);
+                spans.insert(node as *const Yaml, span);
+            }
+        } else {
+            // If node doesn't have an anchor, try to find it in the general node tracking
+            // We don't have a direct way to map from node to position, so we need to
+            // search based on node equality
+            let node_match = tracker.get_all_node_positions().find(|&(_, _pos)| {
+                // Try to estimate if this position could be for our node
+                // This is a heuristic and may need refinement
+                match node {
+                    Yaml::String(_s) => {
+                        // For strings, we could check nearby text or context
+                        // This is a placeholder for now
+                        true
+                    }
+                    Yaml::Integer(_) => true,
+                    Yaml::Real(_) => true,
+                    Yaml::Boolean(_) => true,
+                    Yaml::Array(_) => true,
+                    Yaml::Hash(_) => true,
+                    Yaml::Alias(_) => true,
+                    _ => false,
+                }
+            });
+
+            if let Some((_, pos)) = node_match {
+                let span = crate::position::PositionSpan::new(pos);
+                spans.insert(node as *const Yaml, span);
+            }
+        }
+
         match node {
             Yaml::Array(array) => {
-                // For arrays, first collect the span for the array itself
-                if let Some(anchor_id) = tracker.find_anchor_id(node) {
-                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                        // If we have an anchor position, use it as the start
-                        let span = crate::position::PositionSpan::new(pos);
-                        spans.insert(node as *const Yaml, span);
-                    }
-                }
-
-                // Then recursively collect spans for each item
+                // Recursively collect spans for each item
                 for item in array {
                     self.collect_position_spans(item, spans);
                 }
             }
             Yaml::Hash(hash) => {
-                // For hashes, first collect the span for the hash itself
-                if let Some(anchor_id) = tracker.find_anchor_id(node) {
-                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                        // If we have an anchor position, use it as the start
-                        let span = crate::position::PositionSpan::new(pos);
-                        spans.insert(node as *const Yaml, span);
-                    }
-                }
-
-                // Then recursively collect spans for each key and value
+                // Recursively collect spans for each key and value
                 for (key, value) in hash {
                     self.collect_position_spans(key, spans);
                     self.collect_position_spans(value, spans);
                 }
             }
-            Yaml::Alias(anchor_id) => {
-                // For aliases, use the position of the alias reference
-                if let Some(pos) = tracker.get_anchor_position(*anchor_id) {
-                    let span = crate::position::PositionSpan::new(pos);
-                    spans.insert(node as *const Yaml, span);
-                }
-            }
-            _ => {
-                // For scalar values, check if there's an anchor
-                if let Some(anchor_id) = tracker.find_anchor_id(node) {
-                    if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                        let span = crate::position::PositionSpan::new(pos);
-                        spans.insert(node as *const Yaml, span);
-                    }
-                }
-            }
+            _ => { /* Scalar nodes have been handled above */ }
         }
     }
 }

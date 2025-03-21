@@ -314,192 +314,18 @@ This section outlines a step-by-step implementation plan for adding accurate pos
    - For `FlowMappingEnd`, position should be exactly at `}`
    - Similar for sequence tokens with `[` and `]`
 
-### Stage 3: Enhance Parser with Position Tracking (yaml-rust2)
+### Stage 3: Enhanced Position Tracking for Non-Anchored Nodes (IN PROGRESS)
 
-1. **Add Position Tracking Stack to Parser**:
-   ```rust
-   pub struct Parser<T> {
-       // ... existing fields
-       
-       // Stack to track open constructs and their positions
-       position_stack: Vec<(State, Marker)>,
-   }
-   ```
-
-2. **Update Flow Collections Parsing Logic**:
-   
-   For `flow_mapping_key` and related functions:
-   ```rust
-   fn flow_mapping_start(&mut self, token: Token) -> ParseResult {
-       let Token(start_mark, _) = token;
-       
-       // Push position to stack to track it for the end token
-       self.position_stack.push((State::FlowMappingFirstKey, start_mark));
-       
-       self.state = State::FlowMappingFirstKey;
-       Ok((
-           Event::MappingStart(anchor_id, tag, TMappingStyle::Flow),
-           PositionSpan::new(start_mark)
-       ))
-   }
-   
-   fn flow_mapping_end(&mut self, token: Token) -> ParseResult {
-       let Token(end_mark, _) = token;
-       
-       // Pop position from stack to get start position
-       let (_, start_mark) = self.position_stack.pop().unwrap();
-       
-       self.state = self.pop_state();
-       Ok((
-           Event::MappingEnd,
-           PositionSpan::with_end(start_mark, end_mark)
-       ))
-   }
-   ```
-   
-   Apply similar changes for flow sequences.
-
-3. **Update Parser's `load` Method**:
-   Modify the method to use the new `on_positioned_event` method of `MarkedEventReceiver` when available.
-
-### Stage 4: Update marked-yaml Loader (marked-yaml)
-
-1. **Remove Flow Mapping Positions Map**:
-   - Remove `flow_mapping_positions` from `MarkedLoader`
-   - Remove `set_flow_mapping_positions()` method
-
-2. **Implement `on_positioned_event` Method**:
-   ```rust
-   impl MarkedEventReceiver for MarkedLoader {
-       // ... existing on_event method
-       
-       fn on_positioned_event(&mut self, ev: Event, span: PositionSpan) {
-           // Short-circuit if the state stack is in error
-           if let Error(_) = self.state_stack.last().unwrap() {
-               return;
-           }
-           
-           // Convert YAML markers to our Marker type
-           let start_mark = self.marker(span.start);
-           let end_mark = span.end.map(|m| self.marker(m));
-           
-           let curstate = self.state_stack.pop().unwrap();
-           
-           // Process event, using both start and end positions to create accurate spans
-           let newstate = match ev {
-               // ... handle other events
-               
-               Event::MappingStart(_, _, style) if style == TMappingStyle::Flow => {
-                   // Create span with accurate start position (at '{')
-                   // End position will be filled in when MappingEnd is encountered
-                   MappingWaitingOnKey(start_mark, MarkedMappingHash::new(), true)
-               }
-               
-               Event::MappingEnd if matches!(curstate, MappingWaitingOnKey(_, _, true)) => {
-                   // For flow mappings, use the provided end position (at '}')
-                   if let MappingWaitingOnKey(start_mark, map, true) = curstate {
-                       let span = Span::new_with_marks(start_mark, end_mark.unwrap_or(start_mark));
-                       // Create the mapping node with the complete span
-                       let node = Node::from(MarkedMappingNode::new(span, map));
-                       // ... rest of existing logic
-                   } else {
-                       unreachable!()
-                   }
-               }
-               
-               // Handle other events similarly, using the appropriate positions
-               // ...
-           };
-           
-           // ... rest of existing logic
-       }
-   }
-   ```
-
-3. **Update `parse_yaml_with_options` Method**:
-   Remove the flow mapping positions extraction and conversion logic.
-
-### Stage 5: Testing and Validation
-
-1. **Create Test Cases for Flow Collections**:
-   - Test simple flow mappings
-   - Test nested flow mappings
-   - Test flow sequences
-   - Test combinations of flow mappings and sequences
-   - Verify position spans are correct in all cases
-
-2. **Update Existing Tests**:
-   Ensure existing tests pass with the new position tracking approach.
-
-3. **Performance Testing**:
-   Compare performance with the previous implementation.
-
-## Phase Implementation Strategy
-
-### Phase 1: Flow Mapping Positions (Current)
-
-- Track positions of flow mapping start tokens (completed)
-- Propagate position IDs through parser to loader
-- Use positions to correctly mark opening braces of flow mappings
-
-### Phase 2: Unified Position Tracking Model
-
-- Define a comprehensive position tracking model
-- Create `EventPositions` structure to hold start and end markers
-- Modify parser to track end positions for all constructs
-- Ensure end markers for block mappings and sequences point to the last character of the last value, not just to the indentation change
-
-### Phase 3: Implementation for All YAML Constructs
-
-- Apply the unified position tracking to all YAML constructs:
-  - Block mappings with accurate end positions
-  - Block sequences with accurate end positions
-  - Flow mappings with proper bracket positions
-  - Flow sequences with proper bracket positions
-  - Multi-line scalars with full span tracking
-  - Flow collections with all nesting levels
-  - Tags, anchors, and aliases
-  - Document delimiters
-
-### Phase 4: Enhanced Position Propagation
-
-- Remove the position_id parameter and the flow_mapping_positions HashMap
-- Modify `MarkedEventReceiver` to receive complete position information
-- Update the MarkedLoader to use the direct position information
-
-### Phase 5: API Consolidation and Documentation
-
-- Clean up and simplify the position tracking API
-- Document the position tracking system comprehensively
-- Provide examples for common use cases
-
-## Implementation Progress
-
-### Stage 1: Basic Position Tracking ✅
-
-- Added `PositionSpan` structure to represent start/end positions
-- Added `PositionTracker` to manage position spans for YAML constructs
-- Enhanced the `MarkedEventReceiver` trait to include position spans
-- Updated the Parser to track positions for YAML constructs
-- Added tests to verify position tracking functionality
-
-### Stage 2: Remove flow_mapping_positions HashMap ✅
-
-- Removed the `flow_mapping_positions` HashMap from Scanner
-- Removed position_id parameter from TokenType::FlowMappingStart
-- Removed the `store_flow_mapping_position`, `get_flow_mapping_position`, and `flow_mapping_positions` methods
-- Removed position_id parameter from Event::MappingStart
-- Updated the Parser and MarkedLoader to use the new implementation
-- Updated tests to verify the new implementation
-
-### Stage 3: Improved Anchor Position Tracking ✅
-
-- Enhanced `PositionTracker` to track anchor/alias positions
-- Added `track_anchor` method to store anchor positions by ID
-- Added `get_anchor_position` method to retrieve anchor positions
-- Updated the event processing logic to handle anchor events with proper position tracking
-- Added tests to verify the anchor position tracking functionality
-- Ensured backward compatibility with existing code
+- [x] Created comprehensive tests to verify position tracking for non-anchored nodes
+- [x] Added tests for block sequences, flow collections, and complex documents
+- [x] Fixed linter warnings and improved code quality
+- [ ] Enhance `PositionTracker` to store positions for all nodes, not just anchored ones
+- [ ] Modify the position tracking in the parser to capture positions for all constructs
+- [ ] Update the MarkedEventReceiver implementation to properly propagate all positions
+- [ ] Add support for tracking both start and end positions for all YAML constructs
+- [ ] Implement position tracking for flow mappings and sequences
+- [ ] Implement position tracking for block mappings and sequences
+- [ ] Add support for scalar values and nested collections
 
 ### Stage 4: Remove anchor_map (COMPLETED)
 
@@ -536,51 +362,51 @@ This section outlines a step-by-step implementation plan for adding accurate pos
 - [ ] Optimize memory usage for large documents
 
 ### 3. Integration with Error Handling
-- [ ] Enhance error messages with precise position information
-- [ ] Create a standardized error reporting format that includes positions
+- [x] Enhance error messages with precise position information
+- [x] Create a standardized error reporting format that includes positions
 - [ ] Add visual error indicators (like pointing to the problematic line)
 
 ### 4. Advanced Features
-- [ ] Add range-based node lookup (find nodes within a certain range)
+- [x] Add range-based node lookup (find nodes within a certain range)
 - [ ] Support for highlighting specific sections of YAML documents
 - [ ] IDE-friendly position information for autocomplete and validation
 
 ### 5. Implement source mapping capabilities for YAML documents
 
-- Create a bidirectional mapping between YAML nodes and their source locations
-- Provide APIs to query positions for any node in the document hierarchy
-- Support looking up nodes by line/column position
-- Implement efficient traversal algorithms for large document trees
-- Add convenience methods for highlighting regions in editors
+- [x] Create a bidirectional mapping between YAML nodes and their source locations
+- [x] Provide APIs to query positions for any node in the document hierarchy
+- [x] Support looking up nodes by line/column position
+- [x] Implement efficient traversal algorithms for large document trees
+- [ ] Add convenience methods for highlighting regions in editors
 
 ### 6. Add support for tracking positions in emitted YAML
 
-- Extend `YamlEmitter` to track positions of emitted elements
-- Create position mappings between input nodes and output document
-- Preserve anchor/alias relationships in emitted documents
-- Add configuration options for controlling position precision
-- Support round-trip editing with position preservation
+- [ ] Extend `YamlEmitter` to track positions of emitted elements
+- [ ] Create position mappings between input nodes and output document
+- [ ] Preserve anchor/alias relationships in emitted documents
+- [ ] Add configuration options for controlling position precision
+- [ ] Support round-trip editing with position preservation
 
 ### 7. Optimize memory usage of position information
 
-- Profile memory usage of current position tracking implementation
-- Implement arena allocation for position information
-- Add optional compression for position data
-- Provide configuration options to control position tracking granularity
-- Benchmark memory usage with different strategies
+- [ ] Profile memory usage of current position tracking implementation
+- [ ] Implement arena allocation for position information
+- [ ] Add optional compression for position data
+- [ ] Provide configuration options to control position tracking granularity
+- [ ] Benchmark memory usage with different strategies
 
 ### 8. Enhance tracking of indentation levels
 
-- Extend scanner to track indentation changes throughout the document
-- Associate indentation with block collections for more precise positioning
-- Improve position tracking for multi-line scalars
-- Add support for analyzing indentation inconsistencies
-- Provide better error messages for indentation-related issues
+- [ ] Extend scanner to track indentation changes throughout the document
+- [ ] Associate indentation with block collections for more precise positioning
+- [ ] Improve position tracking for multi-line scalars
+- [ ] Add support for analyzing indentation inconsistencies
+- [ ] Provide better error messages for indentation-related issues
 
 ### 9. Add support for capturing comments and their positions
 
-- Extend scanner to preserve comments during parsing
-- Create data structures to represent comments with positions
-- Add APIs to access comments associated with YAML nodes
-- Support for attaching comments to specific nodes
-- Preserve comments during document modifications 
+- [ ] Extend scanner to preserve comments during parsing
+- [ ] Create data structures to represent comments with positions
+- [ ] Add APIs to access comments associated with YAML nodes
+- [ ] Support for attaching comments to specific nodes
+- [ ] Preserve comments during document modifications 

@@ -481,26 +481,32 @@ where
         self.next_id = 1;
     }
 
-    /// Find all nodes that fall within a given position range.
+    /// Find the nodes that are contained within a specific range of lines
+    ///
+    /// This method searches for nodes that have spans overlapping with the specified line range.
     ///
     /// # Arguments
     ///
-    /// * `start_line` - The starting line number (1-based)
-    /// * `start_column` - The starting column number (1-based)
-    /// * `end_line` - The ending line number (1-based)
-    /// * `end_column` - The ending column number (1-based)
+    /// * `start_line` - The start line (1-indexed)
+    /// * `start_col` - The start column (1-indexed)
+    /// * `end_line` - The end line (1-indexed)
+    /// * `end_col` - The end column (1-indexed)
     ///
     /// # Returns
     ///
-    /// A vector of node IDs that fall within the specified range.
+    /// A vector of node IDs that are within the specified range
     #[must_use]
     pub fn find_nodes_in_range(
         &self,
         start_line: usize,
-        start_column: usize,
+        start_col: usize,
         end_line: usize,
-        end_column: usize,
+        end_col: usize,
     ) -> Vec<NodeId> {
+        let _start_idx = start_line.saturating_sub(1); // Convert to 0-indexed
+        let _end_idx = end_line.saturating_sub(1); // Convert to 0-indexed
+
+        // Find all nodes that have spans overlapping with the given range
         self.id_to_location
             .iter()
             .filter_map(|(&id, location)| {
@@ -514,10 +520,10 @@ where
                 // 1. Location's end is after or at the range start
                 // 2. Location's start is before or at the range end
                 let location_ends_after_range_start = (loc_end_line > start_line)
-                    || (loc_end_line == start_line && loc_end_column >= start_column);
+                    || (loc_end_line == start_line && loc_end_column >= start_col);
 
                 let location_starts_before_range_end = (loc_start_line < end_line)
-                    || (loc_start_line == end_line && loc_start_column <= end_column);
+                    || (loc_start_line == end_line && loc_start_column <= end_col);
 
                 if location_ends_after_range_start && location_starts_before_range_end {
                     Some(id)
@@ -620,9 +626,9 @@ where
 
         // Get the start and end lines
         let start_line = location.start_line();
-        let start_idx = start_line.saturating_sub(1); // Convert to 0-indexed
+        let _start_idx = start_line.saturating_sub(1); // Convert to 0-indexed
         let end_line = location.end_line().unwrap_or(start_line);
-        let end_idx = end_line.saturating_sub(1); // Convert to 0-indexed
+        let _end_idx = end_line.saturating_sub(1); // Convert to 0-indexed
 
         // Calculate context range
         let context_start = start_line.saturating_sub(context_lines);

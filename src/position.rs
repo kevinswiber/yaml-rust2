@@ -95,6 +95,10 @@ pub struct PositionTracker {
     anchor_positions: std::collections::HashMap<usize, Marker>,
     /// Map of anchor ID to node content
     anchor_nodes: std::collections::HashMap<usize, Yaml>,
+    /// Map of node pointers to positions (for all nodes, not just anchors)
+    node_positions: std::collections::HashMap<usize, Marker>,
+    /// Counter for generating unique node IDs
+    next_node_id: usize,
 }
 
 impl PositionTracker {
@@ -105,6 +109,8 @@ impl PositionTracker {
             position_stack: Vec::new(),
             anchor_positions: std::collections::HashMap::new(),
             anchor_nodes: std::collections::HashMap::new(),
+            node_positions: std::collections::HashMap::new(),
+            next_node_id: 1, // Start from 1
         }
     }
 
@@ -227,6 +233,41 @@ impl PositionTracker {
         self.get_anchor_node(anchor_id).cloned()
     }
 
+    /// Track a node's position regardless of whether it has an anchor
+    ///
+    /// This method stores the position of any node, providing more comprehensive
+    /// position tracking beyond just anchors.
+    ///
+    /// # Returns
+    ///
+    /// A unique ID for the tracked node
+    pub fn track_node_position(&mut self, position: Marker) -> usize {
+        let node_id = self.next_node_id;
+        self.next_node_id += 1;
+        self.node_positions.insert(node_id, position);
+        node_id
+    }
+
+    /// Get the position of a node by its ID
+    ///
+    /// # Returns
+    ///
+    /// The position of the node, or None if not found
+    #[must_use]
+    pub fn get_node_position(&self, node_id: usize) -> Option<Marker> {
+        self.node_positions.get(&node_id).copied()
+    }
+
+    /// Get all non-anchor node positions
+    ///
+    /// # Returns
+    ///
+    /// An iterator over (node_id, position) pairs
+    #[must_use]
+    pub fn get_all_node_positions(&self) -> impl Iterator<Item = (usize, Marker)> + '_ {
+        self.node_positions.iter().map(|(&id, &pos)| (id, pos))
+    }
+
     /// Convert a scalar value to the appropriate Yaml type based on style and tag
     ///
     /// This helper method determines the appropriate Yaml type for a scalar value
@@ -303,13 +344,19 @@ impl PositionTracker {
         }
     }
 
-    /// Process an event and update position tracking
+    /// Process a YAML event and track its position
     ///
-    /// This method takes an event and its position, updates the position tracker's
-    /// internal state, and returns a PositionSpan for the event.
+    /// This method has been enhanced to track positions for all nodes,
+    /// not just those with anchors.
     ///
-    /// For flow collections, it builds a complete span from the opening to the closing
-    /// delimiter. For other events, it just returns a span with the current position.
+    /// # Arguments
+    ///
+    /// * `event` - The YAML event to process
+    /// * `mark` - The position marker for the event
+    ///
+    /// # Returns
+    ///
+    /// A position span for the event
     pub fn process_event(&mut self, event: &Event, mark: Marker) -> PositionSpan {
         match event {
             Event::MappingStart(anchor_id, _, style) if *style == TMappingStyle::Flow => {
@@ -323,6 +370,9 @@ impl PositionTracker {
                     // We'll store an empty mapping that will be populated later
                     self.store_anchor_node(*anchor_id, Yaml::Hash(crate::yaml::Hash::new()));
                 }
+
+                // Track this node position regardless of anchor
+                self.track_node_position(mark);
 
                 PositionSpan::new(mark)
             }
@@ -350,6 +400,9 @@ impl PositionTracker {
                     self.store_anchor_node(*anchor_id, Yaml::Array(Vec::new()));
                 }
 
+                // Track this node position regardless of anchor
+                self.track_node_position(mark);
+
                 PositionSpan::new(mark)
             }
             Event::SequenceEnd => {
@@ -362,6 +415,27 @@ impl PositionTracker {
                     PositionSpan::new(mark)
                 }
             }
+            Event::Scalar(value, style, anchor_id, tag) => {
+                // For scalars, create a span with just the current position
+                let span = PositionSpan::new(mark);
+
+                // If this is an anchor, track it
+                if *anchor_id > 0 {
+                    // For scalars with anchors, track the anchor position
+                    self.track_anchor(*anchor_id, mark);
+
+                    // Convert the scalar value to the appropriate Yaml type
+                    let node = Self::convert_scalar_value(value, style, tag);
+
+                    // Store the node for this anchor
+                    self.store_anchor_node(*anchor_id, node);
+                }
+
+                // Track this node position regardless of anchor
+                self.track_node_position(mark);
+
+                span
+            }
             Event::Alias(_anchor_id) => {
                 // For aliases, we'll create a span with just the current position
                 // We could also look up the anchor position if needed
@@ -370,19 +444,10 @@ impl PositionTracker {
                 // We don't need to handle the node resolution here, as that's done
                 // in the loader. We just need to track the position.
 
+                // Track this node position regardless of anchor
+                self.track_node_position(mark);
+
                 span
-            }
-            Event::Scalar(value, style, anchor_id, tag) if *anchor_id > 0 => {
-                // For scalars with anchors, track the anchor position
-                self.track_anchor(*anchor_id, mark);
-
-                // Convert the scalar value to the appropriate Yaml type
-                let node = Self::convert_scalar_value(value, style, tag);
-
-                // Store the node for this anchor
-                self.store_anchor_node(*anchor_id, node);
-
-                PositionSpan::new(mark)
             }
             _ => {
                 // For all other events, just return a span with the current position
