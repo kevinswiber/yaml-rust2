@@ -205,6 +205,28 @@ impl PositionTracker {
         self.anchor_nodes.get(&anchor_id)
     }
 
+    /// Retrieve an anchor node as a Yaml value
+    ///
+    /// This method is a bridge between the position tracking system and
+    /// YAML document processing. It retrieves the node associated with
+    /// a given anchor ID and returns it as a Yaml value.
+    ///
+    /// # Arguments
+    ///
+    /// * `anchor_id` - The unique ID of the anchor to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Yaml)` - The Yaml node associated with the anchor
+    /// * `None` - If no node exists for this anchor ID
+    ///
+    /// This method is particularly useful when integrating with code that
+    /// uses the anchor_map directly, as it provides a compatible interface.
+    #[must_use]
+    pub fn get_anchor_yaml(&self, anchor_id: usize) -> Option<Yaml> {
+        self.get_anchor_node(anchor_id).cloned()
+    }
+
     /// Convert a scalar value to the appropriate Yaml type based on style and tag
     ///
     /// This helper method determines the appropriate Yaml type for a scalar value

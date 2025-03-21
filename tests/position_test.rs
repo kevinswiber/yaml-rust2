@@ -420,3 +420,107 @@ nested:
         }
     }
 }
+
+#[test]
+fn test_position_tracker_with_loader() {
+    use yaml_rust2::parser::{MarkedEventReceiver, Parser};
+    use yaml_rust2::position::PositionTracker;
+    use yaml_rust2::yaml::Yaml;
+
+    // Sample YAML with anchors and references
+    let s = "
+    anchored_scalar: &scalar_anchor test_value
+    anchored_sequence: &seq_anchor
+      - item1
+      - item2
+    anchored_mapping: &map_anchor
+      key1: value1
+      key2: value2
+    
+    # References to the anchors
+    scalar_ref: *scalar_anchor
+    sequence_ref: *seq_anchor
+    mapping_ref: *map_anchor
+    ";
+
+    // Create custom loader that uses PositionTracker instead of anchor_map
+    struct CustomLoader {
+        position_tracker: PositionTracker,
+        docs: Vec<Yaml>,
+        // Only track what we need for the test
+    }
+
+    impl CustomLoader {
+        fn new() -> Self {
+            CustomLoader {
+                position_tracker: PositionTracker::new(),
+                docs: Vec::new(),
+            }
+        }
+
+        // Similar to YamlLoader::insert_new_node but uses position_tracker
+        fn insert_new_node(&mut self, node: (Yaml, usize)) {
+            // When we have an alias, use position_tracker to get the referenced node
+            if let (Yaml::Alias(id), _) = node {
+                // Get the node from position_tracker instead of anchor_map
+                if let Some(yaml) = self.position_tracker.get_anchor_yaml(id) {
+                    // Process the resolved node
+                    let actual_node = (yaml, 0);
+                    self.process_node(actual_node);
+                    return;
+                }
+            }
+
+            // Process regular node
+            self.process_node(node);
+        }
+
+        // Helper to process a node
+        fn process_node(&mut self, node: (Yaml, usize)) {
+            // Simplified implementation for testing
+            self.docs.push(node.0.clone());
+        }
+    }
+
+    impl MarkedEventReceiver for CustomLoader {
+        fn on_event(&mut self, ev: yaml_rust2::parser::Event, mark: yaml_rust2::scanner::Marker) {
+            // Process the event and update position_tracker
+            let _span = self.position_tracker.process_event(&ev, mark);
+
+            // Example of how to handle different events
+            match ev {
+                yaml_rust2::parser::Event::Scalar(value, _style, anchor_id, _tag) => {
+                    // Example: Create Yaml node and insert it
+                    let node = if anchor_id > 0 {
+                        // Node with anchor
+                        Yaml::String(value.clone())
+                    } else {
+                        // Regular node
+                        Yaml::String(value)
+                    };
+
+                    self.insert_new_node((node, anchor_id));
+                }
+                yaml_rust2::parser::Event::Alias(anchor_id) => {
+                    // For aliases, create a Yaml::Alias node
+                    self.insert_new_node((Yaml::Alias(anchor_id), 0));
+                }
+                // Handle other events similarly
+                _ => {}
+            }
+        }
+    }
+
+    // Create parser and custom loader
+    let mut parser = Parser::new(s.chars());
+    let mut loader = CustomLoader::new();
+
+    // Use the load method to process events
+    parser.load(&mut loader, true).unwrap();
+
+    // Verify that we processed the document correctly
+    assert!(!loader.docs.is_empty());
+
+    // Verify that position_tracker has captured anchor nodes
+    assert!(loader.position_tracker.get_anchor_yaml(1).is_some());
+}
