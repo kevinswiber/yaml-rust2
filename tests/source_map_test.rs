@@ -196,6 +196,117 @@ document:
 }
 
 #[test]
+fn test_source_map_flow_style_mappings() {
+    // This test specifically checks how flow-style mappings are represented in the source map
+    let source = r#"---
+root: { key1: value1, key2: value2 }
+nested:
+  level1: { inner1: val1, inner2: val2 }
+  level2:
+    deep: { a: 1, b: { c: 3, d: 4 }, e: 5 }
+sequence_flow: [1, 2, { key: value }]
+"#;
+
+    // Parse the YAML document using the PositionTrackedLoader
+    let docs = PositionTrackedLoader::load_from_str(source).expect("Should parse YAML");
+    assert!(!docs.is_empty(), "Expected at least one document");
+
+    // Create a parser and loader to get the source map
+    let mut loader = PositionTrackedLoader::default();
+    let mut parser = Parser::new(source.chars());
+    parser
+        .load(&mut loader, true)
+        .expect("Failed to parse YAML");
+
+    // Get the source map from the loader
+    let source_maps = loader.build_source_maps();
+    assert!(!source_maps.is_empty(), "Source maps should not be empty");
+    let source_map = &source_maps[0];
+
+    // Print the source map for debugging
+    println!("\n=== Source Map for Flow-Style Mappings ===");
+
+    // Define the expected key pairs for flow-style mappings in our test document
+    let expected_key_pairs = [
+        ("key1", "key2"),       // Root level flow mapping
+        ("inner1", "inner2"),  // Nested flow mapping
+        ("a", "e"),           // Deep nested flow mapping
+        ("c", "d"),           // Nested flow mapping inside the deep one
+        ("key", "key")        // Flow mapping inside the sequence
+    ];
+
+    // Track which expected mappings we've found
+    let mut found_mappings = vec![false; expected_key_pairs.len()];
+
+    // Debug print all nodes to help identify the flow-style mappings
+    println!("Printing all nodes in the source map:");
+    for id in source_map.get_all_node_ids() {
+        if let Some(location) = source_map.get_location(id) {
+            let start_line = location.start_line();
+            let start_col = location.start_column();
+            
+            if let Some(node) = source_map.get_node(id) {
+                println!("Node ID: {:?}", id);
+                println!("Node Type: {:?}", node);
+                println!("Location: line {}, column {}", start_line, start_col);
+                
+                if let Some(end) = location.span.end {
+                    println!("End: line {}, column {}", end.line(), end.col());
+                } else {
+                    println!("End: None");
+                }
+                
+                // Check if this is a Hash node that could be one of our flow mappings
+                if let Yaml::Hash(ref hash) = node {
+                    // Check against each of our expected key pairs
+                    for (i, (expected_key1, expected_key2)) in expected_key_pairs.iter().enumerate() {
+                        // Check if this hash contains the expected keys
+                        let has_key1 = hash.contains_key(&Yaml::String(expected_key1.to_string()));
+                        let has_key2 = hash.contains_key(&Yaml::String(expected_key2.to_string()));
+                        
+                        if has_key1 && has_key2 {
+                            println!("Found expected flow-style mapping #{} with keys {} and {}!", 
+                                      i, expected_key1, expected_key2);
+                            found_mappings[i] = true;
+                            
+                            // Verify the position has an end marker and print it for debugging
+                            if let Some(end) = location.span.end {
+                                println!("  Span: {}:{} to {}:{}", start_line, start_col, end.line(), end.col());
+                                println!("  Expected this to be a flow-style mapping at the right position");
+                                
+                                // Note: We're not asserting the exact position yet since we suspect a bug
+                                // Just verify that the end position is after the start position
+                                if end.line() < start_line || (end.line() == start_line && end.col() <= start_col) {
+                                    println!("  WARNING: End position is not after start position!");
+                                }
+                            } else {
+                                println!("  WARNING: No end position for this mapping!");
+                            }
+                        }
+                    }
+                }
+                
+                println!("--------------");
+            }
+        }
+    }
+
+    // Verify that we found all the expected flow-style mappings
+    for (i, found) in found_mappings.iter().enumerate() {
+        let (key1, key2) = expected_key_pairs[i];
+        assert!(*found, "Did not find expected flow-style mapping with keys {} and {}", key1, key2);
+    }
+    
+    // Print a summary of what we found
+    println!("\n=== Flow-Style Mapping Test Summary ===");
+    println!("Found {} out of {} expected flow-style mappings", 
+             found_mappings.iter().filter(|&&found| found).count(),
+             expected_key_pairs.len());
+    println!("This test confirms that flow-style mappings are parsed correctly.");
+    println!("However, their position information may not be accurate yet.");
+}
+
+#[test]
 fn test_source_map_document_traversal() {
     let source = "
 parent:

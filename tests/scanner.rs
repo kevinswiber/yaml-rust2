@@ -450,3 +450,189 @@ fn test_uri() {
 fn test_uri_escapes() {
     // TODO
 }
+
+/// Test that flow collection tokens have correct position information
+#[test]
+fn test_flow_collection_positions() {
+    // Test with a simple flow mapping
+    let s = "{key1: value1, key2: value2}";
+    let mut scanner = Scanner::new(s.chars());
+    
+    // Skip the StreamStart token
+    scanner.next().unwrap();
+    
+    // Get the FlowMappingStart token and check its position
+    let flow_mapping_start = scanner.next().unwrap();
+    match flow_mapping_start.1 {
+        TokenType::FlowMappingStart => {
+            // The position should be at the opening '{'
+            assert_eq!(flow_mapping_start.0.line(), 1);
+            assert_eq!(flow_mapping_start.0.col(), 0);
+        }
+        _ => panic!("Expected FlowMappingStart token"),
+    }
+    
+    // Skip to the FlowMappingEnd token
+    let mut tokens = Vec::new();
+    let mut flow_mapping_end = None;
+    
+    while let Some(token) = scanner.next() {
+        tokens.push(token.clone());
+        if let TokenType::FlowMappingEnd = token.1 {
+            flow_mapping_end = Some(token);
+            break;
+        }
+    }
+    
+    // Check the FlowMappingEnd token position
+    match flow_mapping_end {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowMappingEnd => {
+                    // The position should be at the closing '}'
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), s.len() - 1);
+                }
+                _ => panic!("Expected FlowMappingEnd token"),
+            }
+        }
+        None => panic!("Failed to find FlowMappingEnd token"),
+    }
+    
+    // Test with a nested flow collection
+    let s2 = "{outer: {inner1: value1, inner2: [item1, item2]}}";
+    let mut scanner = Scanner::new(s2.chars());
+    
+    // Skip the StreamStart token
+    scanner.next().unwrap();
+    
+    // Get the outer FlowMappingStart token
+    let outer_start = scanner.next().unwrap();
+    match outer_start.1 {
+        TokenType::FlowMappingStart => {
+            assert_eq!(outer_start.0.line(), 1);
+            assert_eq!(outer_start.0.col(), 0);
+        }
+        _ => panic!("Expected FlowMappingStart token"),
+    }
+    
+    // Find the inner FlowMappingStart token
+    let mut inner_start = None;
+    while let Some(token) = scanner.next() {
+        if let TokenType::FlowMappingStart = token.1 {
+            inner_start = Some(token);
+            break;
+        }
+    }
+    
+    // Check the inner FlowMappingStart token position
+    match inner_start {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowMappingStart => {
+                    // The position should be at the inner opening '{'
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), 8);
+                }
+                _ => panic!("Expected inner FlowMappingStart token"),
+            }
+        }
+        None => panic!("Failed to find inner FlowMappingStart token"),
+    }
+    
+    // Find the FlowSequenceStart token
+    let mut sequence_start = None;
+    while let Some(token) = scanner.next() {
+        if let TokenType::FlowSequenceStart = token.1 {
+            sequence_start = Some(token);
+            break;
+        }
+    }
+    
+    // Check the FlowSequenceStart token position
+    match sequence_start {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowSequenceStart => {
+                    // The position should be at the opening '['
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), 33);
+                }
+                _ => panic!("Expected FlowSequenceStart token"),
+            }
+        }
+        None => panic!("Failed to find FlowSequenceStart token"),
+    }
+    
+    // Find the FlowSequenceEnd token
+    let mut sequence_end = None;
+    while let Some(token) = scanner.next() {
+        if let TokenType::FlowSequenceEnd = token.1 {
+            sequence_end = Some(token);
+            break;
+        }
+    }
+    
+    // Check the FlowSequenceEnd token position
+    match sequence_end {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowSequenceEnd => {
+                    // The position should be at the closing ']'
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), 46);
+                }
+                _ => panic!("Expected FlowSequenceEnd token"),
+            }
+        }
+        None => panic!("Failed to find FlowSequenceEnd token"),
+    }
+    
+    // Find the inner FlowMappingEnd token
+    let mut inner_end = None;
+    while let Some(token) = scanner.next() {
+        if let TokenType::FlowMappingEnd = token.1 {
+            inner_end = Some(token);
+            break;
+        }
+    }
+    
+    // Check the inner FlowMappingEnd token position
+    match inner_end {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowMappingEnd => {
+                    // The position should be at the inner closing '}'
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), 47);
+                }
+                _ => panic!("Expected inner FlowMappingEnd token"),
+            }
+        }
+        None => panic!("Failed to find inner FlowMappingEnd token"),
+    }
+    
+    // Find the outer FlowMappingEnd token
+    let mut outer_end = None;
+    while let Some(token) = scanner.next() {
+        if let TokenType::FlowMappingEnd = token.1 {
+            outer_end = Some(token);
+            break;
+        }
+    }
+    
+    // Check the outer FlowMappingEnd token position
+    match outer_end {
+        Some(token) => {
+            match token.1 {
+                TokenType::FlowMappingEnd => {
+                    // The position should be at the outer closing '}'
+                    assert_eq!(token.0.line(), 1);
+                    assert_eq!(token.0.col(), 48);
+                }
+                _ => panic!("Expected outer FlowMappingEnd token"),
+            }
+        }
+        None => panic!("Failed to find outer FlowMappingEnd token"),
+    }
+}

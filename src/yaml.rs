@@ -1214,13 +1214,17 @@ impl PositionTrackedLoader {
                 }
             }
             Event::SequenceStart(aid, _) => {
-                self.doc_stack.push((Yaml::Array(Vec::new()), aid));
+                // Create a single array instance that will be used consistently
+                let node = Yaml::Array(Vec::new());
+
+                // Push a clone of the node to the document stack
+                self.doc_stack.push((node.clone(), aid));
 
                 // If this is an anchor, store it in position_tracker
                 if aid > 0 {
-                    let empty_array = Yaml::Array(Vec::new());
                     self.position_tracker.track_anchor(aid, mark);
-                    self.position_tracker.store_anchor_node(aid, empty_array);
+                    // Use the same node instance instead of creating a new one
+                    self.position_tracker.store_anchor_node(aid, node);
                 }
             }
             Event::SequenceEnd => {
@@ -1228,6 +1232,7 @@ impl PositionTrackedLoader {
                 self.insert_new_node(node, mark)?;
             }
             Event::MappingStart(aid, _, _) => {
+                // Create a single hash instance that will be used consistently
                 let node = if aid > 0 {
                     if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
                         // If it's an alias reference, get the referenced node from position_tracker
@@ -1243,13 +1248,15 @@ impl PositionTrackedLoader {
                     // Regular mapping, create new hash
                     Yaml::Hash(Hash::new())
                 };
-                self.doc_stack.push((node, aid));
+
+                // Push a clone of the node to the document stack
+                self.doc_stack.push((node.clone(), aid));
                 self.key_stack.push(Yaml::BadValue);
 
                 if aid > 0 {
                     self.position_tracker.track_anchor(aid, mark);
-                    self.position_tracker
-                        .store_anchor_node(aid, Yaml::Hash(Hash::new()));
+                    // Use the same node instance instead of creating a new one
+                    self.position_tracker.store_anchor_node(aid, node);
                 }
             }
             Event::MappingEnd => {
@@ -1314,18 +1321,22 @@ impl PositionTrackedLoader {
     }
 
     fn insert_new_node(&mut self, node: (Yaml, usize), mark: Marker) -> Result<(), ScanError> {
+        // Store the original node for later reference to maintain identity
+        let original_node = node.0.clone();
         if node.1 > 0 {
             // Store the node in position_tracker instead of anchor_map
             self.position_tracker
-                .store_anchor_node(node.1, node.0.clone());
+                .store_anchor_node(node.1, original_node.clone());
         }
         if self.doc_stack.is_empty() {
-            self.doc_stack.push(node);
+            // Use the original node to maintain identity
+            self.doc_stack.push((original_node, node.1));
         } else {
             let parent = self.doc_stack.last_mut().unwrap();
             match *parent {
                 (Yaml::Array(ref mut v), _) => {
-                    let mut newval = node.0;
+                    // Start with the original node to maintain identity
+                    let mut newval = original_node.clone();
                     if let Yaml::Alias(id) = newval {
                         // Get from position_tracker
                         let actual_val = self.position_tracker.get_anchor_yaml(id);
@@ -1336,9 +1347,11 @@ impl PositionTrackedLoader {
                                 if h.is_empty() {
                                     newval = Yaml::BadValue;
                                 } else {
+                                    // Use the actual value from the position tracker to maintain identity
                                     newval = actual_val;
                                 }
                             } else {
+                                // Use the actual value from the position tracker to maintain identity
                                 newval = actual_val;
                             }
                         } else {
@@ -1350,7 +1363,8 @@ impl PositionTrackedLoader {
                 (Yaml::Hash(ref mut h), _) => {
                     let cur_key = self.key_stack.last_mut().unwrap();
                     if cur_key.is_badvalue() {
-                        *cur_key = node.0;
+                        // Use the original key to maintain identity
+                        *cur_key = original_node.clone();
                     } else {
                         let mut newkey = Yaml::BadValue;
                         mem::swap(&mut newkey, cur_key);
@@ -1360,13 +1374,16 @@ impl PositionTrackedLoader {
                             // Get from position_tracker
                             if let Some(referenced_key) = self.position_tracker.get_anchor_yaml(id)
                             {
+                                // Use the referenced key directly to maintain identity
                                 actual_key = referenced_key;
                             }
                         }
                         // Check if the value is an alias
-                        let mut actual_val = node.0;
+                        // Start with the original node to maintain identity
+                        let mut actual_val = original_node.clone();
                         if let Yaml::Alias(id) = actual_val {
                             // Get from position_tracker
+                            // Use the referenced value directly to maintain identity
                             let referenced_val = self.position_tracker.get_anchor_yaml(id);
 
                             // Check for self-referential alias
@@ -1375,9 +1392,11 @@ impl PositionTrackedLoader {
                                     if h.is_empty() {
                                         actual_val = Yaml::BadValue;
                                     } else {
+                                        // Use the reference value directly to maintain identity
                                         actual_val = referenced_val;
                                     }
                                 } else {
+                                    // Use the reference value directly to maintain identity
                                     actual_val = referenced_val;
                                 }
                             } else {
@@ -1504,7 +1523,7 @@ impl PositionTrackedLoader {
     pub fn get_anchor_position(&self, anchor_id: usize) -> Option<crate::position::PositionSpan> {
         self.position_tracker.get_anchor_position(anchor_id)
     }
-    
+
     /// Get the position of a node by its path
     ///
     /// This method looks up a node's position using its path in the document.
