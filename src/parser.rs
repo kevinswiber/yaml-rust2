@@ -78,6 +78,13 @@ pub struct Parser<T> {
     anchor_names: HashMap<usize, String>,
     tags: HashMap<String, String>,
     keep_tags: bool,
+    
+    /// Whether to tolerate duplicate keys in mappings
+    ///
+    /// When set to true, the parser will not error on duplicate keys
+    /// and will keep the last value for each key.
+    /// When set to false (default), the parser will error on duplicate keys.
+    tolerate_duplicate_keys: bool,
 
     /// Position tracker for flow collections
     ///
@@ -181,6 +188,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             anchor_names: HashMap::new(),
             tags: HashMap::new(),
             keep_tags: false,
+            tolerate_duplicate_keys: false,
             position_tracker: crate::position::PositionTracker::default(),
         }
     }
@@ -211,6 +219,29 @@ impl<T: Iterator<Item = char>> Parser<T> {
     pub fn keep_tags(mut self, value: bool) -> Self {
         self.keep_tags = value;
         self
+    }
+    
+    /// Whether to tolerate duplicate keys in mappings.
+    ///
+    /// When set to true, the parser will not error on duplicate keys
+    /// and will keep the last value for each key.
+    /// When set to false (default), the parser will error on duplicate keys.
+    ///
+    /// # Examples
+    /// ```
+    /// # use yaml_rust2::parser::Parser;
+    /// let mut parser = Parser::new_from_str("{foo: bar, foo: baz}");
+    /// parser.tolerate_duplicate_keys(true);
+    /// ```
+    #[must_use]
+    pub fn tolerate_duplicate_keys(mut self, value: bool) -> Self {
+        self.tolerate_duplicate_keys = value;
+        self
+    }
+    
+    /// Get the current value of the tolerate_duplicate_keys option
+    pub fn get_tolerate_duplicate_keys(&self) -> bool {
+        self.tolerate_duplicate_keys
     }
 
     /// Try to load the next event and return it, but do not consuming it from `self`.
@@ -256,7 +287,18 @@ impl<T: Iterator<Item = char>> Parser<T> {
         let token = self.scanner.next();
         match token {
             None => match self.scanner.get_error() {
-                None => Err(ScanError::new(self.scanner.mark(), "unexpected eof")),
+                None => {
+                    // Use the find_error_position method to get a more accurate position for the error
+                    // This is especially important for unclosed flow collections
+                    let error_position = self.scanner.find_error_position();
+                    
+                    // If we have unclosed flow collections, provide a more specific error message
+                    if self.scanner.flow_level() > 0 {
+                        Err(ScanError::new(error_position, "unexpected end of stream while parsing flow collection"))
+                    } else {
+                        Err(ScanError::new(error_position, "unexpected eof"))
+                    }
+                },
                 Some(e) => Err(e),
             },
             Some(tok) => Ok(tok),
@@ -309,6 +351,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError> {
+        // We need to pass the tolerate_duplicate_keys option to the receiver
+        // Since we can't modify the MarkedEventReceiver trait, we'll use a different approach
+        // Let's modify the YamlLoader and PositionTrackedLoader to check the parser's option directly
+        // This is a simpler approach than trying to pass the option through events
         if !self.scanner.stream_started() {
             let (ev, mark) = self.next_token()?;
             if ev != Event::StreamStart {
@@ -1226,7 +1272,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
         // Track different types of events with their positions
         match event {
             // Mapping events
-            Event::MappingStart(anchor_id, _, style) => {
+            Event::MappingStart(anchor_id, _, _style) => {
                 // Create a position span for the mapping start
                 let span = crate::position::PositionSpan::new(mark);
 
@@ -1286,7 +1332,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
 
             // Scalar and alias events
-            Event::Scalar(value, style, anchor_id, tag) => {
+            Event::Scalar(value, style, anchor_id, _tag) => {
                 // Create a position span for the scalar
                 let span = crate::position::PositionSpan::new(mark);
 
@@ -1312,7 +1358,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
 
                 span
             }
-            Event::Alias(anchor_id) => {
+            Event::Alias(_anchor_id) => {
                 // Create a position span for the alias
                 let span = crate::position::PositionSpan::new(mark);
 

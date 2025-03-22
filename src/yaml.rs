@@ -93,6 +93,8 @@ pub struct YamlLoader {
     // Track anchor names for emitting
     anchor_names: BTreeMap<usize, String>,
     next_anchor_id: usize,
+    /// Whether to tolerate duplicate keys
+    tolerate_duplicate_keys: bool,
 }
 
 impl Default for YamlLoader {
@@ -106,6 +108,7 @@ impl Default for YamlLoader {
             error: None,
             anchor_names: BTreeMap::new(),
             next_anchor_id: 1,
+            tolerate_duplicate_keys: false,
         }
     }
 }
@@ -354,11 +357,17 @@ impl YamlLoader {
                                 actual_val = Yaml::BadValue;
                             }
                         }
+                        // Check if the key already exists in the mapping
                         if h.insert(actual_key.clone(), actual_val).is_some() {
-                            return Err(ScanError::new_string(
-                                mark,
-                                format!("{actual_key:?}: duplicated key in mapping"),
-                            ));
+                            // Only raise an error if tolerate_duplicate_keys is false
+                            if !self.tolerate_duplicate_keys {
+                                return Err(ScanError::new_string(
+                                    mark,
+                                    format!("{actual_key:?}: duplicated key in mapping"),
+                                ));
+                            }
+                            // If tolerate_duplicate_keys is true, we've already inserted the new value
+                            // and overwritten the old one, so we just continue
                         }
                     }
                 }
@@ -401,6 +410,8 @@ impl YamlLoader {
         parser: &mut Parser<I>,
     ) -> Result<Vec<Yaml>, ScanError> {
         let mut loader = YamlLoader::default();
+        // Get the tolerate_duplicate_keys option from the parser
+        loader.tolerate_duplicate_keys = parser.get_tolerate_duplicate_keys();
         parser.load(&mut loader, true)?;
         // Copy anchor names from parser
         for (id, name) in parser.get_anchor_names() {
@@ -1147,9 +1158,20 @@ pub struct PositionTrackedLoader {
     // Track anchor names for emitting
     anchor_names: BTreeMap<usize, String>,
     next_anchor_id: usize,
+    /// Whether to tolerate duplicate keys
+    tolerate_duplicate_keys: bool,
 }
 
 impl PositionTrackedLoader {
+    /// Set whether to tolerate duplicate keys in mappings
+    ///
+    /// When set to true, duplicate keys will be allowed in mappings, with the last value
+    /// for a given key being used. When false (the default), duplicate keys will result in
+    /// a ScanError.
+    pub fn tolerate_duplicate_keys(&mut self, value: bool) {
+        self.tolerate_duplicate_keys = value;
+    }
+
     /// Register a new anchor with the given name
     ///
     /// This method assigns a unique ID to an anchor name and stores the mapping.
@@ -1362,11 +1384,17 @@ impl PositionTrackedLoader {
                                 actual_val = Yaml::BadValue;
                             }
                         }
+                        // Check if the key already exists in the mapping
                         if h.insert(actual_key.clone(), actual_val).is_some() {
-                            return Err(ScanError::new_string(
-                                mark,
-                                format!("{actual_key:?}: duplicated key in mapping"),
-                            ));
+                            // Only raise an error if tolerate_duplicate_keys is false
+                            if !self.tolerate_duplicate_keys {
+                                return Err(ScanError::new_string(
+                                    mark,
+                                    format!("{actual_key:?}: duplicated key in mapping"),
+                                ));
+                            }
+                            // If tolerate_duplicate_keys is true, we've already inserted the new value
+                            // and overwritten the old one, so we just continue
                         }
                     }
                 }
@@ -1837,7 +1865,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
     fn on_positioned_event(&mut self, ev: Event, span: crate::position::PositionSpan) {
         // Store the complete position span in our position tracker
         match &ev {
-            Event::MappingStart(anchor_id, _, style) => {
+            Event::MappingStart(anchor_id, _, _style) => {
                 // For mappings, store the start position
                 if *anchor_id > 0 {
                     // For anchored nodes, we track the anchor by ID
@@ -1887,7 +1915,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                     );
                 }
             }
-            Event::Scalar(value, style, anchor_id, tag) => {
+            Event::Scalar(value, style, anchor_id, _tag) => {
                 // For scalars, store the position
                 if *anchor_id > 0 {
                     // For anchored nodes, we track the anchor by ID

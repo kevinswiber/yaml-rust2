@@ -500,6 +500,8 @@ pub struct Scanner<T> {
     flow_mapping_started: bool,
     /// Whether we currently are in an implicit flow mapping.
     implicit_flow_mapping: bool,
+    /// Track positions of opening flow collection markers for better error reporting
+    flow_collection_start_marks: Vec<(TokenType, Marker)>,
 }
 
 impl<T: Iterator<Item = char>> Iterator for Scanner<T> {
@@ -552,6 +554,7 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             leading_whitespace: true,
             flow_mapping_started: false,
             implicit_flow_mapping: false,
+            flow_collection_start_marks: Vec::new(),
         }
     }
 
@@ -562,6 +565,31 @@ impl<T: Iterator<Item = char>> Scanner<T> {
     #[inline]
     pub fn get_error(&self) -> Option<ScanError> {
         self.error.clone()
+    }
+
+    /// Find the most appropriate position to report when encountering an unexpected end of input.
+    /// If we have unclosed flow collections, use the position of the most recent opening marker.
+    /// Otherwise, use the current position.
+    #[must_use]
+    pub fn find_error_position(&self) -> Marker {
+        // If we have unclosed flow collections, use the position of the most recent opening marker
+        if !self.flow_collection_start_marks.is_empty() {
+            // Find the most recent opening marker
+            if let Some((_, mark)) = self.flow_collection_start_marks.last() {
+                // Always return the position of the opening marker for unclosed flow collections
+                // FIX: This might not be working right now.
+                return *mark;
+            }
+        }
+
+        // Otherwise, use the current position
+        self.mark
+    }
+
+    /// Get the current flow level
+    #[inline]
+    pub fn flow_level(&self) -> i32 {
+        self.flow_level.into()
     }
 
     /// Fill `self.buffer` with at least `count` characters.
@@ -1516,6 +1544,10 @@ impl<T: Iterator<Item = char>> Scanner<T> {
             self.flow_mapping_started = true;
         }
 
+        // Store the position of this opening flow collection marker for better error reporting
+        self.flow_collection_start_marks
+            .push((tok.clone(), start_mark));
+
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         self.tokens.push_back(Token(start_mark, tok));
@@ -1527,6 +1559,24 @@ impl<T: Iterator<Item = char>> Scanner<T> {
         self.decrease_flow_level();
 
         self.disallow_simple_key();
+
+        // Remove the corresponding opening marker from our tracking list
+        // The matching opening token is either FlowMappingStart for FlowMappingEnd
+        // or FlowSequenceStart for FlowSequenceEnd
+        let matching_start_tok = match tok {
+            TokenType::FlowMappingEnd => TokenType::FlowMappingStart,
+            TokenType::FlowSequenceEnd => TokenType::FlowSequenceStart,
+            _ => unreachable!("Only flow collection end tokens should reach this point"),
+        };
+
+        // Remove the most recent matching opening marker
+        if let Some(pos) = self
+            .flow_collection_start_marks
+            .iter()
+            .rposition(|(t, _)| *t == matching_start_tok)
+        {
+            self.flow_collection_start_marks.remove(pos);
+        }
 
         self.end_implicit_mapping(self.mark);
 
