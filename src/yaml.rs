@@ -1499,10 +1499,28 @@ impl PositionTrackedLoader {
     ///
     /// # Returns
     ///
-    /// The position of the anchor, or None if not found
+    /// The position span of the anchor, or None if not found
     #[must_use]
-    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<Marker> {
+    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<crate::position::PositionSpan> {
         self.position_tracker.get_anchor_position(anchor_id)
+    }
+    
+    /// Get the position of a node by its path
+    ///
+    /// This method looks up a node's position using its path in the document.
+    /// This is particularly useful for retrieving positions of flow-style mappings
+    /// and sequences that are identified by their path in the document structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to the node (e.g., "root.key1")
+    ///
+    /// # Returns
+    ///
+    /// The position span of the node, or None if not found
+    #[must_use]
+    pub fn get_node_position_by_path(&self, path: &str) -> Option<crate::position::PositionSpan> {
+        self.position_tracker.get_node_position_by_path(path)
     }
 
     /// Get the node associated with a specific anchor
@@ -1579,18 +1597,16 @@ impl PositionTrackedLoader {
             // 1. Check if this is an anchored node
             if let Some(anchor_id) = tracker.find_anchor_id(node) {
                 if let Some(pos) = tracker.get_anchor_position(anchor_id) {
-                    // If we have an anchor position, use it as the start
-                    let span = crate::position::PositionSpan::new(pos);
-                    spans.insert(node as *const Yaml, span);
+                    // If we have an anchor position, use it directly
+                    spans.insert(node as *const Yaml, pos);
                 }
             }
             // 2. Try to find the node by its content hash
             else {
                 let hash = crate::position::PositionTracker::calculate_node_hash(node);
                 if let Some(pos) = tracker.get_position_by_hash(hash) {
-                    // If we found a position for this node's hash, use it
-                    let span = crate::position::PositionSpan::new(pos);
-                    spans.insert(node as *const Yaml, span);
+                    // If we found a position for this node's hash, use it directly
+                    spans.insert(node as *const Yaml, pos);
                 }
             }
         }
