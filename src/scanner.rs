@@ -60,7 +60,7 @@ pub struct Marker {
 
 impl Marker {
     /// Create a marker
-    pub(crate) fn new(index: usize, line: usize, col: usize) -> Marker {
+    pub fn new(index: usize, line: usize, col: usize) -> Marker {
         Marker { index, line, col }
     }
 
