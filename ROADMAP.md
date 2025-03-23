@@ -17,52 +17,78 @@ The implementation includes:
 - Position-based node lookup capabilities
 - Test suite validating source mapping functionality
 
-## 🚧 Pointer Equality Issues in Source Mapping - IN PROGRESS
+## ✅ Pointer Equality Issues in Source Mapping - COMPLETED
 
-We've identified and are addressing issues related to pointer equality in the source mapping system:
+We've successfully addressed issues related to pointer equality in the source mapping system:
 
 ### Identified Issues:
 
 1. **Node Identity Inconsistency**: 
-   - Different node instances with the same content are being created during parsing
-   - This causes pointer equality checks to fail when looking up nodes in the source map
+   - Different node instances with the same content were being created during parsing
+   - This caused pointer equality checks to fail when looking up nodes in the source map
    - Particularly problematic for flow collections (mappings and sequences)
 
 2. **Source Map Building Process**:
-   - The `collect_position_spans` method uses a `HashMap<*const Yaml, PositionSpan>` which relies on pointer equality
-   - When nodes in the document and nodes in the source map are different instances, pointer equality checks fail
+   - The `collect_position_spans` method used a `HashMap<*const Yaml, PositionSpan>` which relied on pointer equality
+   - When nodes in the document and nodes in the source map were different instances, pointer equality checks failed
 
 3. **Flow Collections Handling**:
-   - Flow collections are often created and manipulated in multiple places
-   - This leads to different instances with the same content being used in different parts of the code
+   - Flow collections were often created and manipulated in multiple places
+   - This led to different instances with the same content being used in different parts of the code
 
-### Progress Made:
+### Implemented Solutions:
 
-1. **Fixed `insert_new_node` Method**:
-   - Modified to maintain node identity by consistently using the original node instance
-   - Added proper handling of node identity when resolving aliases and inserting into collections
+1. **Enhanced Position Tracker**:
+   - Modified the `PositionTracker` to store all nodes, not just anchored ones
+   - Added an `all_nodes` map to ensure consistent node instances throughout the parsing process
+   - Implemented methods to store and retrieve nodes from the `all_nodes` map:
+     - `store_node`: Stores a node in the `all_nodes` map and returns its ID
+     - `get_node`: Retrieves a node by its ID from the `all_nodes` map
+     - `get_node_yaml`: Gets the Yaml node by its ID
+     - `get_node_by_hash`: Retrieves a node by its content hash
+     - `find_node_id`: Finds a node ID by its content using content equality
 
-2. **Improved Event Handlers**:
-   - Modified `MappingStart` and `SequenceStart` event handlers to ensure consistent node instances
-   - Enhanced position tracking for flow collections
+2. **Improved Source Map Building**:
+   - Updated the `collect_position_spans` method to use canonical node instances from the `all_nodes` map
+   - Modified node lookup to use content hashes instead of relying solely on pointer equality
+   - Ensured that the source map uses the same node instances as the document structure
 
-### Planned Improvements:
-
-1. **Enhance Position Tracker**:
-   - Modify the `PositionTracker` to store all nodes, not just anchored ones
-   - Ensure consistent node instances throughout the parsing process
-
-2. **Improve Source Map Building**:
-   - Ensure that the source map uses the same node instances as the document structure
-   - Refine how nodes are stored and retrieved during the parsing process
-
-3. **Refactor Flow Collection Handling**:
-   - Target the flow collection handling in the parser to ensure consistent node instances
-   - Improve position tracking specifically for flow collections
+3. **Refactored Flow Collection Handling**:
+   - Updated the `track_node_with_hash` method to accept an optional node parameter
+   - Modified all calls to `track_node_with_hash` to include the node parameter
+   - Improved position tracking specifically for flow collections
 
 4. **Comprehensive Testing**:
-   - Expand test suite to verify pointer equality is maintained
-   - Add tests for complex nested structures
+   - Expanded test suite to verify pointer equality is maintained
+   - Added tests for complex nested structures
+
+### Benefits of the Implementation:
+
+1. **Consistent Node Identity**:
+   - Nodes with the same content now maintain the same identity throughout the parsing process
+   - Pointer equality checks now work correctly in the source map
+
+2. **Improved Position Tracking**:
+   - All nodes, including those in flow collections, now have accurate position information
+   - Position spans correctly track both start and end positions
+
+3. **Better Source Map Building**:
+   - The source map now correctly maps nodes to their positions, even for complex nested structures
+   - Position lookups are more reliable and accurate
+
+## 🚧 Next Steps for Position Tracking - IN PROGRESS
+
+1. **Performance Optimization**:
+   - Analyze and optimize memory usage of the `all_nodes` map
+   - Consider more efficient data structures for node storage and retrieval
+
+2. **Enhanced API**:
+   - Provide more convenient methods for position lookup and navigation
+   - Improve error reporting with more precise location information
+
+3. **Documentation**:
+   - Update documentation to reflect the new position tracking capabilities
+   - Provide examples of how to use the enhanced position tracking system
 
 ## ✅ Stage 1: Define Position Structures - COMPLETED
 

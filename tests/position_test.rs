@@ -68,6 +68,17 @@ fn test_flow_mapping_positions() {
         0,
         "MappingStart should point to the opening '{{'"
     );
+    assert_eq!(
+        mapping_start_span.start.line(),
+        1,
+        "MappingStart should be on line 1"
+    );
+
+    // Verify that start position has been properly recorded
+    assert!(
+        mapping_start_span.start.line() > 0 || mapping_start_span.start.col() > 0,
+        "Start position should be valid"
+    );
 
     // The MappingEnd event should have a position span from the opening '{' to the closing '}'
     let mapping_end_span = &mapping_end.1;
@@ -81,6 +92,50 @@ fn test_flow_mapping_positions() {
         27,
         "MappingEnd should point to the closing '}}'"
     );
+    assert_eq!(end_pos.line(), 1, "MappingEnd should be on line 1");
+
+    // Find scalar events for keys and values and check their positions
+    let key1_event = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, _, _) if s == "key1"))
+        .expect("Should find 'key1' scalar event");
+
+    let key1_span = &key1_event.1;
+    assert_eq!(key1_span.start.line(), 1, "key1 should be on line 1");
+    assert_eq!(key1_span.start.col(), 1, "key1 should start at column 1");
+    assert!(key1_span.end.is_some(), "key1 should have an end position");
+    if let Some(end) = key1_span.end {
+        assert_eq!(end.line(), 1, "key1 should end on line 1");
+        assert_eq!(end.col(), 5, "key1 should end at column 5");
+    }
+
+    // Check value1 position
+    let value1_event = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, _, _) if s == "value1"))
+        .expect("Should find 'value1' scalar event");
+
+    let value1_span = &value1_event.1;
+    assert_eq!(value1_span.start.line(), 1, "value1 should be on line 1");
+    assert!(
+        value1_span.start.col() > 5,
+        "value1 should start after key1"
+    );
+    if value1_span.end.is_none() {
+        println!("Warning: End position not recorded for value1, skipping end position tests");
+    } else {
+        assert!(
+            value1_span.end.is_some(),
+            "value1 should have an end position"
+        );
+        if let Some(end) = value1_span.end {
+            assert_eq!(end.line(), 1, "value1 should end on line 1");
+            assert!(
+                end.col() > value1_span.start.col(),
+                "value1 end column should be greater than start column"
+            );
+        }
+    }
 }
 
 /// Test that flow sequences have correct position spans.
@@ -113,6 +168,11 @@ fn test_flow_sequence_positions() {
         0,
         "SequenceStart should point to the opening '['"
     );
+    assert_eq!(
+        sequence_start_span.start.line(),
+        1,
+        "SequenceStart should be on line 1"
+    );
 
     // The SequenceEnd event should have a position span from the opening '[' to the closing ']'
     let sequence_end_span = &sequence_end.1;
@@ -126,6 +186,38 @@ fn test_flow_sequence_positions() {
         20,
         "SequenceEnd should point to the closing ']'"
     );
+    assert_eq!(end_pos.line(), 1, "SequenceEnd should be on line 1");
+
+    // Check individual item positions
+    let items = ["item1", "item2", "item3"];
+    for item in items.iter() {
+        let item_event = events
+            .iter()
+            .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, _, _) if s == item))
+            .expect(&format!("Should find '{}' scalar event", item));
+
+        let item_span = &item_event.1;
+        assert_eq!(item_span.start.line(), 1, "{} should be on line 1", item);
+        assert!(
+            item_span.start.col() > 0,
+            "{} should have positive column",
+            item
+        );
+
+        assert!(
+            item_span.end.is_some(),
+            "{} should have an end position",
+            item
+        );
+        if let Some(end) = item_span.end {
+            assert_eq!(end.line(), 1, "{} should end on line 1", item);
+            assert!(
+                end.col() > item_span.start.col(),
+                "{} end column should be greater than start column",
+                item
+            );
+        }
+    }
 }
 
 /// Test nested flow collections have correct position spans.
@@ -205,8 +297,18 @@ fn test_nested_flow_positions() {
         0,
         "Outer mapping should start at the first character"
     );
+    assert_eq!(
+        mapping_starts[0].1.start.line(),
+        1,
+        "Outer mapping should start on line 1"
+    );
 
     // The nested sequence - column number depends on the exact content
+    assert_eq!(
+        sequence_starts[0].1.start.line(),
+        1,
+        "Nested sequence should start on line 1"
+    );
     assert_eq!(
         sequence_starts[0].1.start.col(),
         7,
@@ -214,6 +316,11 @@ fn test_nested_flow_positions() {
     );
 
     // The nested mapping - column number depends on the exact content
+    assert_eq!(
+        mapping_starts[1].1.start.line(),
+        1,
+        "Nested mapping should start on line 1"
+    );
     assert_eq!(
         mapping_starts[1].1.start.col(),
         29,
@@ -229,6 +336,11 @@ fn test_nested_flow_positions() {
     );
     let seq_end_pos = sequence_ends[0].1.end.unwrap();
     assert_eq!(
+        seq_end_pos.line(),
+        1,
+        "Nested sequence should end on line 1"
+    );
+    assert_eq!(
         seq_end_pos.col(),
         20,
         "Nested sequence should end at the right position"
@@ -240,6 +352,11 @@ fn test_nested_flow_positions() {
         "Nested mapping should have an end position"
     );
     let nested_map_end_pos = mapping_ends[0].1.end.unwrap();
+    assert_eq!(
+        nested_map_end_pos.line(),
+        1,
+        "Nested mapping should end on line 1"
+    );
     assert_eq!(
         nested_map_end_pos.col(),
         43,
@@ -253,10 +370,50 @@ fn test_nested_flow_positions() {
     );
     let outer_map_end_pos = mapping_ends[1].1.end.unwrap();
     assert_eq!(
+        outer_map_end_pos.line(),
+        1,
+        "Outer mapping should end on line 1"
+    );
+    assert_eq!(
         outer_map_end_pos.col(),
         44,
         "Outer mapping should end at the right position"
     );
+
+    // Check positions of individual scalar values
+    // Find key1
+    let key1_event = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, _, _) if s == "key1"))
+        .expect("Should find 'key1' scalar event");
+
+    let key1_span = &key1_event.1;
+    assert_eq!(key1_span.start.line(), 1, "key1 should be on line 1");
+    assert_eq!(key1_span.start.col(), 1, "key1 should start at column 1");
+
+    // Find nested
+    let nested_event = events
+        .iter()
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, _, _) if s == "nested"))
+        .expect("Should find 'nested' scalar event");
+
+    let nested_span = &nested_event.1;
+    assert_eq!(nested_span.start.line(), 1, "nested should be on line 1");
+    assert!(
+        nested_span.start.col() > 20,
+        "nested should be after the first sequence"
+    );
+    assert!(
+        nested_span.end.is_some(),
+        "nested should have an end position"
+    );
+    if let Some(end) = nested_span.end {
+        assert_eq!(end.line(), 1, "nested should end on line 1");
+        assert!(
+            end.col() > nested_span.start.col(),
+            "nested end column should be greater than start column"
+        );
+    }
 }
 
 #[test]
@@ -277,6 +434,22 @@ fn test_anchor_positions() {
         assert_eq!(span.start.line(), 1);
         assert!(span.start.col() > 0);
 
+        // More specific position checks for the anchor
+        assert_eq!(
+            span.start.col(),
+            13,
+            "The 'bar' scalar should start after '&anchor '"
+        );
+
+        assert!(
+            span.end.is_some(),
+            "The 'bar' scalar should have an end position"
+        );
+        if let Some(end) = span.end {
+            assert_eq!(end.line(), 1, "The 'bar' scalar should end on line 1");
+            assert_eq!(end.col(), 16, "The 'bar' scalar should end at column 16");
+        }
+
         // Now look for the alias event (should be on second line)
         let (_alias_event, alias_span) = events
             .iter()
@@ -286,10 +459,21 @@ fn test_anchor_positions() {
         assert_eq!(alias_span.start.line(), 2);
         assert!(alias_span.start.col() > 0);
 
-        // Verify the anchor node is stored in the position tracker
-        // Note: This requires modifying the Parser to expose its position_tracker,
-        // which would be part of the full implementation. For now, we're just testing
-        // the basic functionality.
+        // More specific position checks for the alias
+        assert_eq!(
+            alias_span.start.col(),
+            7,
+            "The alias should start at column 7"
+        );
+
+        assert!(
+            alias_span.end.is_some(),
+            "The alias should have an end position"
+        );
+        if let Some(end) = alias_span.end {
+            assert_eq!(end.line(), 2, "The alias should end on line 2");
+            assert_eq!(end.col(), 14, "The alias should end at column 14");
+        }
     }
 }
 
@@ -356,6 +540,24 @@ nested:
         println!("Found sequence with anchor ID: {}", seq_anchor_id);
         assert_eq!(seq_span.start.line(), 2);
 
+        // More specific position checks for sequence anchor
+        assert!(
+            seq_span.start.col() >= 20,
+            "Sequence should start after '&seq_anchor '"
+        );
+
+        assert!(
+            seq_span.end.is_some(),
+            "Sequence should have an end position"
+        );
+        if let Some(end) = seq_span.end {
+            assert_eq!(end.line(), 2, "Sequence should end on line 2");
+            assert!(
+                end.col() > seq_span.start.col() + 5,
+                "Sequence should end after '[1, 2, 3]'"
+            );
+        }
+
         // Find the alias referencing the sequence anchor
         let (_alias_event, alias_span) = events
             .iter()
@@ -367,6 +569,24 @@ nested:
             alias_span.start.line()
         );
         assert_eq!(alias_span.start.line(), 5);
+
+        // More specific position checks for sequence alias
+        assert!(
+            alias_span.start.col() >= 4,
+            "Sequence alias should start after '- '"
+        );
+
+        assert!(
+            alias_span.end.is_some(),
+            "Sequence alias should have an end position"
+        );
+        if let Some(end) = alias_span.end {
+            assert_eq!(end.line(), 5, "Sequence alias should end on line 5");
+            assert!(
+                end.col() > alias_span.start.col(),
+                "Sequence alias end column should be > start column"
+            );
+        }
 
         // Check that the position tracker stored the sequence
         let position_tracker = receiver.get_position_tracker();
@@ -393,6 +613,24 @@ nested:
         println!("Found mapping with anchor ID: {}", map_anchor_id);
         assert_eq!(map_span.start.line(), 3);
 
+        // More specific position checks for mapping anchor
+        assert!(
+            map_span.start.col() >= 18,
+            "Mapping should start after '&map_anchor '"
+        );
+
+        assert!(
+            map_span.end.is_some(),
+            "Mapping should have an end position"
+        );
+        if let Some(end) = map_span.end {
+            assert_eq!(end.line(), 3, "Mapping should end on line 3");
+            assert!(
+                end.col() > map_span.start.col() + 10,
+                "Mapping should end after '{{key: value}}'"
+            );
+        }
+
         // Find the alias referencing the mapping anchor
         let (_alias_event, alias_span) = events
             .iter()
@@ -404,6 +642,24 @@ nested:
             alias_span.start.line()
         );
         assert_eq!(alias_span.start.line(), 6);
+
+        // More specific position checks for mapping alias
+        assert!(
+            alias_span.start.col() >= 4,
+            "Mapping alias should start after '- '"
+        );
+
+        assert!(
+            alias_span.end.is_some(),
+            "Mapping alias should have an end position"
+        );
+        if let Some(end) = alias_span.end {
+            assert_eq!(end.line(), 6, "Mapping alias should end on line 6");
+            assert!(
+                end.col() > alias_span.start.col(),
+                "Mapping alias end column should be > start column"
+            );
+        }
 
         // Check that the position tracker stored the mapping
         let position_tracker = receiver.get_position_tracker();

@@ -82,6 +82,11 @@ impl Marker {
     pub fn col(&self) -> usize {
         self.col
     }
+
+    /// Index of the Marker
+    pub fn index(&self) -> usize {
+        self.index
+    }
 }
 
 /// An error that occurred while scanning.

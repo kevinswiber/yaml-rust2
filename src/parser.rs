@@ -1351,10 +1351,9 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 }
 
                 // Track all scalars regardless of anchor
-                let node_hash = crate::position::PositionTracker::calculate_node_hash(
-                    &crate::yaml::Yaml::String(value.clone()),
-                );
-                self.position_tracker.track_node_with_hash(node_hash, mark);
+                let node = crate::yaml::Yaml::String(value.clone());
+                let node_hash = crate::position::PositionTracker::calculate_node_hash(&node);
+                self.position_tracker.track_node_with_hash(node_hash, mark, Some(node));
 
                 span
             }

@@ -276,6 +276,8 @@ where
         self.id_to_node.insert(id, node);
         id
     }
+    
+
 
     /// Register a node with its source location, using a specific ID.
     ///
@@ -473,6 +475,14 @@ where
     pub fn is_empty(&self) -> bool {
         self.id_to_node.is_empty()
     }
+    
+    /// Get the position tracker associated with this source map.
+    ///
+
+    
+
+    
+
 
     /// Clear the source map, removing all nodes and their locations.
     pub fn clear(&mut self) {
@@ -739,6 +749,8 @@ impl SourceMapBuilder {
         self.source_map.register_node(node, location)
     }
 
+
+    
     /// Build the source map from a YAML document.
     ///
     /// This method traverses the document and registers all nodes with their
@@ -789,6 +801,7 @@ impl SourceMapBuilder {
         }
 
         register_nodes(&mut self, document, position_spans);
+        
         self.source_map
     }
 
