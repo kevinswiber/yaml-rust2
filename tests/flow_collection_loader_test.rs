@@ -1,10 +1,6 @@
 #![cfg(feature = "source_mapping")]
 
-use yaml_rust2::{
-    parser::Parser,
-    position::PositionSpan,
-    yaml::{PositionTrackedLoader, Yaml},
-};
+use yaml_rust2::{parser::Parser, position::PositionSpan, PositionTrackedLoader, Yaml};
 
 #[cfg(feature = "source_mapping")]
 use yaml_rust2::{

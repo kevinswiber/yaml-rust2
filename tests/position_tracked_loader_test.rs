@@ -1,5 +1,8 @@
+#![cfg(feature = "source_mapping")]
+
 use yaml_rust2::parser::Parser;
-use yaml_rust2::yaml::{PositionTrackedLoader, Yaml};
+use yaml_rust2::PositionTrackedLoader;
+use yaml_rust2::Yaml;
 
 #[test]
 fn test_basic_loading() {

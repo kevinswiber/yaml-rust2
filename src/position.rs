@@ -5,9 +5,10 @@
 
 use std::fmt::Display;
 
+use crate::error::ScanError;
 use crate::parser::Event;
 use crate::parser::Tag;
-use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
+use crate::scanner::{Marker, TMappingStyle, TScalarStyle};
 use crate::yaml::Yaml;
 
 /// A unique identifier for a YAML node in the document.

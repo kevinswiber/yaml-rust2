@@ -1,4 +1,6 @@
-use yaml_rust2::yaml::{PositionTrackedLoader, Yaml, YamlLoader};
+#![cfg(feature = "source_mapping")]
+use yaml_rust2::PositionTrackedLoader;
+use yaml_rust2::{Yaml, YamlLoader};
 
 /// Test helper to compare Yaml nodes for equivalence
 fn assert_yaml_eq(a: &Yaml, b: &Yaml) {

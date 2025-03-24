@@ -95,9 +95,15 @@ extern crate hashlink;
 pub(crate) mod char_traits;
 #[macro_use]
 pub(crate) mod debug;
+#[cfg(feature = "encoding")]
+pub mod decoder;
 pub mod emitter;
+pub mod error;
+pub mod loader;
 pub mod parser;
 pub mod position;
+#[cfg(feature = "source_mapping")]
+pub mod position_tracked_loader;
 pub mod scanner;
 #[cfg(feature = "source_mapping")]
 pub mod source_map;
@@ -107,9 +113,12 @@ pub mod yaml;
 
 // reexport key APIs
 pub use crate::emitter::{EmitError, YamlEmitter};
+pub use crate::error::{LoadError, ScanError};
+pub use crate::loader::{load_from_iter, load_from_str, YamlLoader};
 pub use crate::parser::Event;
 pub use crate::position::{AnchorId, NodeId, PositionSpan};
-pub use crate::scanner::ScanError;
+#[cfg(feature = "source_mapping")]
+pub use crate::position_tracked_loader::PositionTrackedLoader;
 #[cfg(feature = "source_mapping")]
 pub use crate::source_map::{SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport};
 #[cfg(feature = "source_mapping")]
@@ -117,5 +126,4 @@ pub use crate::source_map_utils::{
     node_preview, node_type_name, parse_yaml_file_with_source_map, parse_yaml_with_source_map,
     YamlWithSourceMap,
 };
-pub use crate::yaml::loader::{load_from_iter, load_from_str};
-pub use crate::yaml::{PositionTrackedLoader, Yaml, YamlLoader};
+pub use crate::yaml::Yaml;

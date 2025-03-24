@@ -5,7 +5,8 @@
 //! construct the [`crate::Yaml`] object.
 
 use crate::{
-    scanner::{Marker, ScanError, Scanner, TMappingStyle, TScalarStyle, Token, TokenType},
+    error::ScanError,
+    scanner::{Marker, Scanner, TMappingStyle, TScalarStyle, Token, TokenType},
     AnchorId, NodeId,
 };
 use std::collections::HashMap;

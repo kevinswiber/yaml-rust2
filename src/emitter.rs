@@ -1,6 +1,7 @@
 //! YAML serialization helpers.
 
-use crate::yaml::{Hash, Yaml, YamlLoader};
+use crate::loader::YamlLoader;
+use crate::yaml::{Hash, Yaml};
 use crate::AnchorId;
 use std::collections::HashSet;
 use std::convert::From;
