@@ -691,3 +691,48 @@ The flow collection position tracking has been successfully implemented and test
 - Enhanced position span handling in the TestLoader to properly capture positions
 
 This implementation ensures that flow-style mappings and sequences have accurate position information that reflects their actual location in the source document, enabling precise error reporting and source mapping.
+
+## Leading Trivia Tracking
+
+To improve position tracking accuracy, we'll need to track leading trivia (elements that come before the actual node content). This includes:
+
+```rust
+pub enum LeadingTrivia {
+    SequenceIndicator(Marker),    // Position of '-' in block sequences
+    Anchor(Marker),               // Position of '&anchor_name'
+    Tag(Marker),                  // Position of '!tag' or '!!tag'
+    Comment(Marker),              // Position of '# comment'
+    // Could add more variants as needed
+}
+```
+
+Each node in the AST would get a `leading_trivia` field:
+```rust
+struct Node {
+    // ... existing fields ...
+    leading_trivia: Vec<LeadingTrivia>,  // Multiple trivia elements can precede a node
+}
+```
+
+This will help with:
+1. Accurate source mapping for IDE features
+2. Preserving comments during round-trip parsing
+3. Better error messages that point to the exact problematic element
+4. Maintaining anchor and tag positions separately from node content
+5. Supporting block sequence indicator position tracking
+
+Example YAML showing why this matters:
+```yaml
+# Header comment
+- &anchor !tag  # Inline comment
+  key: value    # The actual node content starts here
+```
+
+In this case we need to track:
+1. The `-` sequence indicator position
+2. The `&anchor` position
+3. The `!tag` position
+4. Both comment positions
+5. The actual node content position
+
+This will be implemented after the style tracking improvements outlined in track_mapping_style.md.
