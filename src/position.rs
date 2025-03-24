@@ -3,10 +3,62 @@
 //! This module provides structures for tracking the positions of YAML constructs
 //! in the source document, including both start and end positions.
 
+use std::fmt::Display;
+
 use crate::parser::Event;
 use crate::parser::Tag;
 use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
 use crate::yaml::Yaml;
+
+/// A unique identifier for a YAML node in the document.
+///
+/// This is used to create a stable reference to a node that can be used
+/// for mapping between the node and its source position.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash, Default)]
+pub struct NodeId(pub(crate) usize);
+
+impl NodeId {
+    /// Create a new node ID with the given index.
+    #[must_use]
+    pub fn new(id: usize) -> Self {
+        NodeId(id)
+    }
+
+    /// Get the underlying ID value.
+    #[must_use]
+    pub fn value(&self) -> usize {
+        self.0
+    }
+}
+
+impl Display for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash, Default)]
+pub struct AnchorId(pub(crate) usize);
+
+impl AnchorId {
+    /// Create a new node ID with the given index.
+    #[must_use]
+    pub fn new(id: usize) -> Self {
+        AnchorId(id)
+    }
+
+    /// Get the underlying ID value.
+    #[must_use]
+    pub fn value(&self) -> usize {
+        self.0
+    }
+}
+
+impl Display for AnchorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A start and end position for a YAML construct.
 ///
@@ -90,27 +142,27 @@ pub type PositionedParseResult = Result<(Event, PositionSpan), ScanError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PositionTracker {
     /// A stack of positions for open constructs
-    position_stack: Vec<(usize, Marker)>,
+    position_stack: Vec<(NodeId, Marker)>,
     /// Map of anchor ID to position
-    anchor_positions: std::collections::HashMap<usize, Marker>,
+    anchor_positions: std::collections::HashMap<AnchorId, Marker>,
     /// Map of anchor ID to node content
-    anchor_nodes: std::collections::HashMap<usize, Yaml>,
+    anchor_nodes: std::collections::HashMap<AnchorId, Yaml>,
     /// Map of anchor ID to node ID for better resolution
-    anchor_node_ids: std::collections::HashMap<usize, usize>,
+    anchor_node_ids: std::collections::HashMap<AnchorId, NodeId>,
     /// Map of node pointers to positions (for all nodes, not just anchors)
-    node_positions: std::collections::HashMap<usize, PositionSpan>,
+    node_positions: std::collections::HashMap<NodeId, PositionSpan>,
     /// Map of node content hash to node ID
-    node_content_hash_map: std::collections::HashMap<u64, usize>,
+    node_content_hash_map: std::collections::HashMap<u64, NodeId>,
     /// Map of node path to node ID for tracking non-anchored nodes
-    node_path_map: std::collections::HashMap<String, usize>,
+    node_path_map: std::collections::HashMap<String, NodeId>,
     /// Counter for generating unique node IDs
-    next_node_id: usize,
+    next_node_id: NodeId,
     /// Stack of path components for tracking the current path
     path_stack: Vec<String>,
     /// The current key being processed (for mapping entries)
     current_key: Option<String>,
     /// Map of node ID to node instance - stores ALL nodes for consistent identity
-    all_nodes: std::collections::HashMap<usize, Yaml>,
+    all_nodes: std::collections::HashMap<NodeId, Yaml>,
 }
 
 impl PositionTracker {
@@ -125,7 +177,7 @@ impl PositionTracker {
             node_positions: std::collections::HashMap::new(),
             node_content_hash_map: std::collections::HashMap::new(),
             node_path_map: std::collections::HashMap::new(),
-            next_node_id: 1, // Start from 1
+            next_node_id: NodeId::new(1), // Start from 1
             path_stack: Vec::new(),
             current_key: None,
             all_nodes: std::collections::HashMap::new(),
@@ -190,7 +242,7 @@ impl PositionTracker {
     ///
     /// The `id` parameter is used to identify the construct type (e.g., 0 for flow mappings,
     /// 1 for flow sequences).
-    pub fn push(&mut self, id: usize, position: Marker) {
+    pub fn push(&mut self, id: NodeId, position: Marker) {
         self.position_stack.push((id, position));
     }
 
@@ -201,7 +253,7 @@ impl PositionTracker {
     ///
     /// Returns `None` if the stack is empty.
     #[must_use]
-    pub fn pop(&mut self) -> Option<(usize, Marker)> {
+    pub fn pop(&mut self) -> Option<(NodeId, Marker)> {
         self.position_stack.pop()
     }
 
@@ -212,7 +264,7 @@ impl PositionTracker {
     ///
     /// Returns `None` if the stack is empty.
     #[must_use]
-    pub fn peek(&self) -> Option<&(usize, Marker)> {
+    pub fn peek(&self) -> Option<&(NodeId, Marker)> {
         self.position_stack.last()
     }
 
@@ -232,7 +284,7 @@ impl PositionTracker {
     ///
     /// This is used to remember the position of an anchor declaration for future reference
     /// and also associate the anchor with a node ID for better resolution
-    pub fn track_anchor(&mut self, anchor_id: usize, position: Marker) {
+    pub fn track_anchor(&mut self, anchor_id: AnchorId, position: Marker) {
         // Track the anchor position
         self.anchor_positions.insert(anchor_id, position);
 
@@ -256,7 +308,7 @@ impl PositionTracker {
     ///
     /// The node ID associated with the anchor, if found
     #[must_use]
-    pub fn find_node_id_by_anchor(&self, anchor_id: usize) -> Option<usize> {
+    pub fn find_node_id_by_anchor(&self, anchor_id: AnchorId) -> Option<NodeId> {
         self.anchor_node_ids.get(&anchor_id).copied()
     }
 
@@ -274,7 +326,7 @@ impl PositionTracker {
     /// # Returns
     ///
     /// * `usize` - The ID assigned to this node
-    pub fn track_node_by_path(&mut self, path: &str, node: &Yaml, position: Marker) -> usize {
+    pub fn track_node_by_path(&mut self, path: &str, node: &Yaml, position: Marker) -> NodeId {
         // Check if we already have a node ID for this node
         let existing_id = self.find_node_id(node);
 
@@ -337,7 +389,7 @@ impl PositionTracker {
     /// * `Some(usize)` - The node ID if found
     /// * `None` - If no node ID is associated with this path
     #[must_use]
-    pub fn find_node_id_by_path(&self, path: &str) -> Option<usize> {
+    pub fn find_node_id_by_path(&self, path: &str) -> Option<NodeId> {
         self.node_path_map.get(path).copied()
     }
 
@@ -345,7 +397,7 @@ impl PositionTracker {
     ///
     /// Returns the position span where the anchor was declared
     #[must_use]
-    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<PositionSpan> {
+    pub fn get_anchor_position(&self, anchor_id: AnchorId) -> Option<PositionSpan> {
         self.anchor_positions
             .get(&anchor_id)
             .map(|&pos| PositionSpan::new(pos))
@@ -355,7 +407,7 @@ impl PositionTracker {
     ///
     /// Returns a vector of tuples containing the path, node ID, and node
     #[must_use]
-    pub fn get_nodes_by_path(&self) -> Vec<(String, usize, Yaml)> {
+    pub fn get_nodes_by_path(&self) -> Vec<(String, NodeId, Yaml)> {
         let mut result = Vec::new();
         for (path, &node_id) in self.node_path_map.iter() {
             if let Some(node) = self.all_nodes.get(&node_id) {
@@ -369,7 +421,7 @@ impl PositionTracker {
     ///
     /// Returns a vector of tuples containing the anchor ID and node
     #[must_use]
-    pub fn get_anchor_nodes(&self) -> Vec<(usize, Yaml)> {
+    pub fn get_anchor_nodes(&self) -> Vec<(AnchorId, Yaml)> {
         let mut result = Vec::new();
         for (&anchor_id, node) in self.anchor_nodes.iter() {
             result.push((anchor_id, node.clone()));
@@ -402,12 +454,12 @@ impl PositionTracker {
     ///
     /// The node ID if a matching node was found, or None otherwise
     #[must_use]
-    pub fn get_node_hash_by_content(&self, node: &Yaml) -> Option<usize> {
+    pub fn get_node_hash_by_content(&self, node: &Yaml) -> Option<NodeId> {
         let hash = Self::calculate_node_hash(node);
         self.node_content_hash_map.get(&hash).copied()
     }
     /// as it allows for complete node resolution when encountering aliases.
-    pub fn store_anchor_node(&mut self, anchor_id: usize, node: Yaml) {
+    pub fn store_anchor_node(&mut self, anchor_id: AnchorId, node: Yaml) {
         // Store the node in both the anchor_nodes map and the all_nodes map
         // This ensures that the same node instance is used consistently
         let _node_id = self.store_node(node.clone());
@@ -426,7 +478,7 @@ impl PositionTracker {
     /// # Returns
     ///
     /// The ID of the stored node
-    pub fn store_node(&mut self, node: Yaml) -> usize {
+    pub fn store_node(&mut self, node: Yaml) -> NodeId {
         // Calculate a hash for the node's content
         let hash = Self::calculate_node_hash(&node);
 
@@ -444,7 +496,7 @@ impl PositionTracker {
 
         // If we don't have this node yet, create a new ID and store it
         let node_id = self.next_node_id;
-        self.next_node_id += 1;
+        self.next_node_id = NodeId::new(self.next_node_id.value() + 1);
 
         // Store the node in the all_nodes map
         self.all_nodes.insert(node_id, node);
@@ -472,7 +524,7 @@ impl PositionTracker {
     /// This method works for all node types (scalar, sequence, mapping)
     /// and is used when resolving aliases in the YAML document.
     #[must_use]
-    pub fn get_anchor_node(&self, anchor_id: usize) -> Option<&Yaml> {
+    pub fn get_anchor_node(&self, anchor_id: AnchorId) -> Option<&Yaml> {
         self.anchor_nodes.get(&anchor_id)
     }
 
@@ -494,7 +546,7 @@ impl PositionTracker {
     /// This method is particularly useful when integrating with code that
     /// uses the anchor_map directly, as it provides a compatible interface.
     #[must_use]
-    pub fn get_anchor_yaml(&self, anchor_id: usize) -> Option<Yaml> {
+    pub fn get_anchor_yaml(&self, anchor_id: AnchorId) -> Option<Yaml> {
         self.get_anchor_node(anchor_id).cloned()
     }
 
@@ -512,7 +564,7 @@ impl PositionTracker {
     /// * `Some(&Yaml)` - Reference to the stored node if found
     /// * `None` - If no node exists for this ID
     #[must_use]
-    pub fn get_node(&self, node_id: usize) -> Option<&Yaml> {
+    pub fn get_node(&self, node_id: NodeId) -> Option<&Yaml> {
         self.all_nodes.get(&node_id)
     }
 
@@ -529,7 +581,7 @@ impl PositionTracker {
     /// * `Some(Yaml)` - The Yaml node if found
     /// * `None` - If no node exists for this ID
     #[must_use]
-    pub fn get_node_yaml(&self, node_id: usize) -> Option<Yaml> {
+    pub fn get_node_yaml(&self, node_id: NodeId) -> Option<Yaml> {
         self.get_node(node_id).cloned()
     }
 
@@ -547,7 +599,7 @@ impl PositionTracker {
     /// * `Some(usize)` - The ID of the node if found
     /// * `None` - If no node with this content exists
     #[must_use]
-    pub fn find_node_id(&self, node: &Yaml) -> Option<usize> {
+    pub fn find_node_id(&self, node: &Yaml) -> Option<NodeId> {
         // Calculate a hash for the node's content
         let hash = Self::calculate_node_hash(node);
 
@@ -582,9 +634,9 @@ impl PositionTracker {
     /// # Returns
     ///
     /// A unique ID for the tracked node
-    pub fn track_node_position(&mut self, position: Marker) -> usize {
+    pub fn track_node_position(&mut self, position: Marker) -> NodeId {
         let node_id = self.next_node_id;
-        self.next_node_id += 1;
+        self.next_node_id = NodeId::new(self.next_node_id.value() + 1);
         // Create a PositionSpan with just the start position
         self.node_positions
             .insert(node_id, PositionSpan::new(position));
@@ -597,7 +649,7 @@ impl PositionTracker {
     ///
     /// The position span of the node, or None if not found
     #[must_use]
-    pub fn get_node_position(&self, node_id: usize) -> Option<PositionSpan> {
+    pub fn get_node_position(&self, node_id: NodeId) -> Option<PositionSpan> {
         self.node_positions.get(&node_id).copied()
     }
 
@@ -607,8 +659,111 @@ impl PositionTracker {
     ///
     /// An iterator over (node_id, position_span) pairs
     #[must_use]
-    pub fn get_all_node_positions(&self) -> impl Iterator<Item = (usize, PositionSpan)> + '_ {
+    pub fn get_all_node_positions(&self) -> impl Iterator<Item = (NodeId, PositionSpan)> + '_ {
         self.node_positions.iter().map(|(&id, &pos)| (id, pos))
+    }
+
+    #[cfg(feature = "source_mapping")]
+    /// Determines if a node is a flow sequence based on characteristics
+    /// Flow sequences are denoted by surrounding `[` and `]` characters
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the node is determined to be a flow sequence, `false` otherwise
+    pub fn is_flow_sequence(&self, node_id: NodeId) -> bool {
+        let id = node_id;
+
+        // First check if we're tracking this node directly
+        if let Some(node) = self.all_nodes.get(&id) {
+            // Flow sequences must be arrays
+            if let Yaml::Array(items) = node {
+                // Check position characteristics
+                if let Some(position) = self.node_positions.get(&id) {
+                    // Primary characteristic: start column is not at beginning of line (typically)
+                    // Flow sequences rarely start at column 0 in typical YAML
+                    if position.start.col() > 0 {
+                        return true;
+                    }
+
+                    // If we have an end position, we can make a better determination
+                    if let Some(end) = position.end {
+                        // If the array is small (few items) and the span is narrow,
+                        // it's likely a flow sequence
+                        let is_small_array = items.len() <= 5;
+                        let same_line = end.line() == position.start.line();
+                        let narrow_span = end.col() - position.start.col() < 60;
+
+                        if is_small_array && (same_line || narrow_span) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    #[cfg(feature = "source_mapping")]
+    /// Determines if a node is a flow mapping based on characteristics
+    /// Flow mappings are denoted by surrounding `{` and `}` characters
+    /// They can span multiple lines but typically maintain a more compact structure
+    /// than block mappings.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the node is determined to be a flow mapping, `false` otherwise
+    pub fn is_flow_mapping(&self, node_id: NodeId) -> bool {
+        let id = node_id;
+
+        // First check if we're tracking this node directly
+        if let Some(node) = self.all_nodes.get(&id) {
+            // Flow mappings must be hash maps
+            if let Yaml::Hash(items) = node {
+                // Check position characteristics
+                if let Some(position) = self.node_positions.get(&id) {
+                    // Primary characteristic: start column is not at beginning of line (typically)
+                    // Flow mappings rarely start at column 0 in typical YAML
+                    if position.start.col() > 0 {
+                        return true;
+                    }
+
+                    // If we have an end position, we can make a better determination
+                    if let Some(end) = position.end {
+                        // Several heuristics that suggest flow mapping:
+
+                        // 1. Small mapping (few key-value pairs)
+                        let is_small_mapping = items.len() <= 5;
+
+                        // 2. Position span characteristics
+                        let line_span = end.line() - position.start.line();
+
+                        // Small mappings that span only a few lines are likely flow mappings
+                        // (Block mappings typically span many more lines due to indentation)
+                        if is_small_mapping && line_span <= 5 {
+                            return true;
+                        }
+
+                        // 3. Compact structure (less vertical space than block mappings)
+                        // If the mapping has multiple items but spans fewer lines than items,
+                        // it's likely using flow style with multiple items per line
+                        if items.len() > 2 && line_span + 1 < items.len() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Track a node by its content and position
@@ -630,7 +785,7 @@ impl PositionTracker {
         content_hash: u64,
         position: Marker,
         node: Option<Yaml>,
-    ) -> usize {
+    ) -> NodeId {
         let node_id = self.track_node_position(position);
         self.node_content_hash_map.insert(content_hash, node_id);
 
@@ -950,11 +1105,15 @@ impl PositionTracker {
             Event::MappingStart(anchor_id, _, style) => {
                 // For all mappings (both flow and block style), push the start position to the stack
                 // Use different IDs for flow (0) and block (2) mappings
-                let mapping_id = if *style == TMappingStyle::Flow { 0 } else { 2 };
+                let mapping_id = if *style == TMappingStyle::Flow {
+                    NodeId::new(0)
+                } else {
+                    NodeId::new(2)
+                };
                 self.push(mapping_id, mark);
 
                 // If this is also an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     self.track_anchor(*anchor_id, mark);
                     // For now, we can't store the node content as we don't have the full mapping yet
                     // We'll store an empty mapping that will be populated later
@@ -1031,7 +1190,7 @@ impl PositionTracker {
                 if let Some((id, start_mark)) = self.pop() {
                     // If the item on top of the stack is a mapping (id 0 for flow or 2 for block),
                     // return a span from its start position to the current position
-                    if id == 0 || id == 2 {
+                    if id == NodeId::new(0) || id == NodeId::new(2) {
                         // Create a complete span with start and end positions
                         let complete_span = PositionSpan::with_end(start_mark, mark);
 
@@ -1105,11 +1264,11 @@ impl PositionTracker {
                 // Use different IDs for flow (1) and block (3) sequences
                 // For now, we'll use ID 1 for all sequences since we don't have a reliable way to detect flow sequences
                 // In the future, we might need to enhance the Event enum to include style information for sequences
-                let sequence_id = 1;
+                let sequence_id = NodeId::new(1);
                 self.push(sequence_id, mark);
 
                 // If this is also an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     self.track_anchor(*anchor_id, mark);
                     // For now, we can't store the node content as we don't have the full sequence yet
                     // We'll store an empty sequence that will be populated later
@@ -1155,24 +1314,57 @@ impl PositionTracker {
                 // If the item on top of the stack is a sequence (id 1 for flow or 3 for block),
                 // return a span from its start position to the current position
                 if let Some((id, start_mark)) = self.pop() {
-                    if id == 1 || id == 3 {
+                    if id == NodeId::new(1) || id == NodeId::new(3) {
                         // Create a complete span with start and end positions
                         let complete_span = PositionSpan::with_end(start_mark, mark);
 
-                        // Find any nodes that were created with just the start position
-                        // and update them with the complete span
-                        for (node_id, position) in self.node_positions.iter_mut() {
-                            // Check if this position has the same start mark and no end mark
-                            if position.start == start_mark && position.end.is_none() {
-                                // Update the position with the end mark
-                                position.end = Some(mark);
+                        // For flow sequences (id 1), we need special handling for end positions
+                        if id == NodeId::new(1) {
+                            // Flow sequence ID is 1
+                            // Find array nodes in all_nodes and collect them before updating
+                            let span_with_end = PositionSpan::with_end(start_mark, mark);
+                            let mut nodes_to_update = Vec::new();
+
+                            // First collect all array nodes from all_nodes
+                            for (node_id, node) in &self.all_nodes {
+                                // Check if this is an array node
+                                if let Yaml::Array(_) = node {
+                                    // Save this node ID for updating later
+                                    nodes_to_update.push(*node_id);
+                                }
                             }
 
-                            // Also update any nodes that might be referenced by path
-                            let path = format!("sequence_{}", node_id);
-                            if self.node_path_map.contains_key(&path) {
-                                // This is a sequence node that we need to update
-                                position.end = Some(mark);
+                            // Then collect array nodes from the path map
+                            for (_, node_id) in self.node_path_map.iter() {
+                                // Check if we've already collected this node ID
+                                if !nodes_to_update.contains(node_id) {
+                                    // Fetch the node to check if it's an array
+                                    if let Some(node) = self.all_nodes.get(node_id) {
+                                        if let Yaml::Array(_) = node {
+                                            // Add to our collection
+                                            nodes_to_update.push(*node_id);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Now update all collected nodes with their end positions
+                            for node_id in nodes_to_update {
+                                // Only update if this node has a matching span
+                                if let Some(pos) = self.node_positions.get_mut(&node_id) {
+                                    if pos.end.is_none() {
+                                        // Instead of directly setting the end position,
+                                        // use track_span_with_end to ensure all paths are updated
+                                        let start_mark = pos.start;
+                                        self.track_span_with_end(node_id, start_mark, mark);
+                                        println!(
+                                            "Updated end position for array node {} to ({},{})",
+                                            node_id,
+                                            mark.line(),
+                                            mark.col()
+                                        );
+                                    }
+                                }
                             }
                         }
 
@@ -1220,7 +1412,7 @@ impl PositionTracker {
                 let node_id = self.track_node_with_hash(hash, mark, Some(node.clone()));
 
                 // If this is an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     // For scalars with anchors, track the anchor position
                     self.track_anchor(*anchor_id, mark);
                     // Store the converted node
@@ -1291,7 +1483,7 @@ impl PositionTracker {
     /// * `Some(usize)` - The anchor ID if found
     /// * `None` - If no anchor is associated with this node
     #[must_use]
-    pub fn find_anchor_id(&self, node: &Yaml) -> Option<usize> {
+    pub fn find_anchor_id(&self, node: &Yaml) -> Option<AnchorId> {
         // First try direct equality
         for (id, anchor_node) in &self.anchor_nodes {
             if anchor_node == node {
@@ -1324,12 +1516,12 @@ impl PositionTracker {
     /// # Returns
     ///
     /// A unique ID for the tracked node
-    pub fn track_node_with_path(&mut self, path: &str, position: Marker) -> usize {
+    pub fn track_node_with_path(&mut self, path: &str, position: Marker) -> NodeId {
         let node_id = match self.node_path_map.get(path) {
             Some(&id) => id,
             None => {
                 let id = self.next_node_id;
-                self.next_node_id += 1;
+                self.next_node_id = NodeId::new(self.next_node_id.value() + 1);
                 self.node_path_map.insert(path.to_owned(), id);
                 id
             }
@@ -1364,7 +1556,7 @@ impl PositionTracker {
     ///
     /// An iterator over all node paths and their IDs
     #[must_use]
-    pub fn get_all_node_paths(&self) -> impl Iterator<Item = (&String, &usize)> {
+    pub fn get_all_node_paths(&self) -> impl Iterator<Item = (&String, &NodeId)> {
         self.node_path_map.iter()
     }
 
@@ -1382,6 +1574,52 @@ impl PositionTracker {
                 .get(id)
                 .map(|&position| (path, position))
         })
+    }
+
+    /// Register a complete span with both start and end positions
+    ///
+    /// This is a convenience method to set both the start and end position in one call
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node to update
+    /// * `start` - The start position marker
+    /// * `end` - The end position marker
+    pub fn track_span_with_end(&mut self, node_id: NodeId, start: Marker, end: Marker) {
+        // Create a complete span with start and end positions
+        let complete_span = PositionSpan::with_end(start, end);
+
+        // Update the node's position in the node_positions map
+        self.node_positions.insert(node_id, complete_span);
+
+        // Collect paths that need updating to avoid borrowing issues
+        let paths_to_update: Vec<String> = self
+            .node_path_map
+            .iter()
+            .filter_map(|(path, &id)| {
+                if id == node_id {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Now update each path separately
+        for path in paths_to_update {
+            // Update positions for each path that maps to this node
+            if let Some(id) = self.node_path_map.get(&path).copied() {
+                if id == node_id && self.node_positions.contains_key(&id) {
+                    // Use track_node_with_path first to ensure the node is properly registered
+                    self.track_node_with_path(&path, start);
+
+                    // Now directly update the end position
+                    if let Some(pos) = self.node_positions.get_mut(&id) {
+                        pos.end = Some(end);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1402,7 +1640,7 @@ impl PositionTracker {
     ///
     /// A vector of tuples containing the path and node ID
     #[must_use]
-    pub fn get_path_mappings(&self) -> Vec<(String, usize)> {
+    pub fn get_path_mappings(&self) -> Vec<(String, NodeId)> {
         self.node_path_map
             .iter()
             .map(|(k, v)| (k.clone(), *v))
@@ -1423,7 +1661,7 @@ impl PositionTracker {
     /// * `Some(usize)` - The node ID if found
     /// * `None` - If no node ID is associated with this path
     #[must_use]
-    pub fn find_node_id_by_path_str(&self, path: &str) -> Option<usize> {
+    pub fn find_node_id_by_path_str(&self, path: &str) -> Option<NodeId> {
         self.node_path_map.get(path).copied()
     }
 
@@ -1436,7 +1674,7 @@ impl PositionTracker {
     ///
     /// * `node_id` - The ID of the node
     /// * `position` - The position to set
-    pub fn set_node_position(&mut self, node_id: usize, position: Marker) {
+    pub fn set_node_position(&mut self, node_id: NodeId, position: Marker) {
         let span = PositionSpan {
             start: position,
             end: Some(position),

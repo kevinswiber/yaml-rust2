@@ -1,10 +1,8 @@
 #![cfg(feature = "source_mapping")]
 
 use yaml_rust2::{
-    scanner::Marker,
-    source_map::SourceLocation,
-    parser::Parser, position::PositionSpan, source_map::SourceMapSupport, PositionTrackedLoader,
-    Yaml,
+    parser::Parser, position::PositionSpan, scanner::Marker, source_map::SourceLocation,
+    source_map::SourceMapSupport, PositionTrackedLoader, Yaml,
 };
 
 // Helper function to convert a node to a string representation
@@ -84,12 +82,7 @@ fn find_node_by_path<'a>(
     // and compare their content with what we're looking for
     for id in source_map.get_all_node_ids() {
         if let Some(node) = source_map.get_node(id) {
-            // Try direct pointer equality first
-            if std::ptr::eq(node as *const Yaml, current as *const Yaml) {
-                return Some((id, current));
-            }
-
-            // Then try value equality
+            // Compare by value instead of pointer equality
             if node == current {
                 return Some((id, current));
             }
@@ -433,16 +426,18 @@ mixed:
         let end_marker = Marker::new(
             flow_mapping_loc.span.start.index(),
             flow_mapping_loc.span.start.line(),
-            flow_mapping_loc.span.start.col() + 10 // Arbitrary offset
+            flow_mapping_loc.span.start.col() + 10, // Arbitrary offset
         );
-        let mut source_map_mut = source_maps[0].clone();  
+        let mut source_map_mut = source_maps[0].clone();
         let location = source_map_mut.get_location(flow_mapping_id).unwrap();
-        let new_location = SourceLocation::new(PositionSpan::with_end(
-            location.span.start,
-            end_marker
-        ));
+        let new_location =
+            SourceLocation::new(PositionSpan::with_end(location.span.start, end_marker));
         // No way to directly modify the source map, so we'll just continue with the test
-        println!("Created simulated end position at ({},{})", end_marker.line(), end_marker.col());
+        println!(
+            "Created simulated end position at ({},{})",
+            end_marker.line(),
+            end_marker.col()
+        );
     } else {
         assert!(
             flow_mapping_loc.span.end.is_some(),
@@ -456,11 +451,14 @@ mixed:
         3,
         "flow_mapping should start at line 3"
     );
-    
+
     // Adjust expectation: flow_mapping position is detected differently in the implementation
     // Instead of starting after the colon (col 13), it starts at the beginning of the line (col 0)
     // This is a known implementation detail
-    println!("Note: flow_mapping is at col {} instead of expected col 13", flow_mapping_loc.span.start.col());
+    println!(
+        "Note: flow_mapping is at col {} instead of expected col 13",
+        flow_mapping_loc.span.start.col()
+    );
     // We don't assert the exact column anymore since it's an implementation detail
 
     if let Some(end) = flow_mapping_loc.span.end {
@@ -494,20 +492,132 @@ mixed:
     }
 
     // Check flow_seq position
-    if let Some((flow_seq_id, _)) = find_node_by_path(document, source_map, &["mixed", "flow_seq"])
+    // First, print all nodes with "flow_seq" in their paths or names
+    println!("Looking for flow_seq nodes. Available nodes:");
+    for id in source_map.get_all_node_ids() {
+        if let Some(node) = source_map.get_node(id) {
+            // Check if the node looks like a flow sequence
+            if let Yaml::Array(array) = node {
+                if array.len() > 0 {
+                    if let Some(loc) = source_map.get_location(id) {
+                        println!(
+                            "  Array node {:?} at ({},{}) - ({},{}): {:?}",
+                            id,
+                            loc.span.start.line(),
+                            loc.span.start.col(),
+                            loc.span.end.map_or(0, |m| m.line()),
+                            loc.span.end.map_or(0, |m| m.col()),
+                            array
+                        );
+                    }
+                }
+            }
+
+            // Check if it's the "flow_seq" string
+            if let Yaml::String(s) = node {
+                if s == "flow_seq" {
+                    if let Some(loc) = source_map.get_location(id) {
+                        println!(
+                            "  String node {:?} with value 'flow_seq' at ({},{}) - ({},{}):",
+                            id,
+                            loc.span.start.line(),
+                            loc.span.start.col(),
+                            loc.span.end.map_or(0, |m| m.line()),
+                            loc.span.end.map_or(0, |m| m.col())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Print document structure to help debug
+    println!("\nDocument structure:");
+    println!(
+        "document keys: {:?}",
+        document.as_hash().map(|h| h.keys().collect::<Vec<_>>())
+    );
+    if let Some(mixed) = document
+        .as_hash()
+        .and_then(|h| h.get(&Yaml::String("mixed".to_string())))
     {
+        println!(
+            "mixed keys: {:?}",
+            mixed.as_hash().map(|h| h.keys().collect::<Vec<_>>())
+        );
+        if let Some(flow_seq) = mixed
+            .as_hash()
+            .and_then(|h| h.get(&Yaml::String("flow_seq".to_string())))
+        {
+            println!("flow_seq: {:?}", flow_seq);
+        } else {
+            println!("No flow_seq found in mixed");
+        }
+    } else {
+        println!("No mixed found in document");
+    }
+
+    // Continue with original test, but directly use a better method to find the array node
+    // Look for an array node with the correct content - this is more reliable than path-based lookup
+    let mut correct_flow_seq_id = None;
+
+    // First try to use the document structure to find the correct array node
+    if let Some(mixed) = document
+        .as_hash()
+        .and_then(|h| h.get(&Yaml::String("mixed".to_string())))
+    {
+        if let Some(flow_seq) = mixed
+            .as_hash()
+            .and_then(|h| h.get(&Yaml::String("flow_seq".to_string())))
+        {
+            // We found the flow_seq node in the document
+            // Now try to find it in the source map
+            for id in source_map.get_all_node_ids() {
+                if let Some(node) = source_map.get_node(id) {
+                    if node == flow_seq {
+                        // Found exact match by value
+                        correct_flow_seq_id = Some(id);
+
+                        // If we found the correct ID, check its position and print debug info
+                        if let Some(location) = source_map.get_location(id) {
+                            println!("Found exact match for flow_seq array: NodeId({:?}) at position ({},{}) - ({},{})",
+                                id,
+                                location.span.start.line(),
+                                location.span.start.col(),
+                                location.span.end.map_or(0, |m| m.line()),
+                                location.span.end.map_or(0, |m| m.col()));
+                        }
+
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // If we found a better ID, use it, otherwise fall back to the original method
+    if let Some(flow_seq_id) = correct_flow_seq_id.or_else(|| {
+        find_node_by_path(document, source_map, &["mixed", "flow_seq"]).map(|(id, _)| id)
+    }) {
         let flow_seq_loc = source_map
             .get_location(flow_seq_id)
             .expect("Should have position for flow_seq");
 
         // Position detection is not reliable for flow_seq
         // Log actual position for debugging
-        println!("Note: flow_seq starts at line {}, column {}", 
-                flow_seq_loc.span.start.line(), flow_seq_loc.span.start.col());
+        println!(
+            "Note: flow_seq starts at line {}, column {}",
+            flow_seq_loc.span.start.line(),
+            flow_seq_loc.span.start.col()
+        );
 
         if let Some(end) = flow_seq_loc.span.end {
-            // Log end position for debugging 
-            println!("Note: flow_seq ends at line {}, column {}", end.line(), end.col());
+            // Log end position for debugging
+            println!(
+                "Note: flow_seq ends at line {}, column {}",
+                end.line(),
+                end.col()
+            );
         } else {
             println!("Note: flow_seq has no end position");
         }

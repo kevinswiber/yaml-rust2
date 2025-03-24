@@ -108,12 +108,10 @@ pub mod yaml;
 // reexport key APIs
 pub use crate::emitter::{EmitError, YamlEmitter};
 pub use crate::parser::Event;
-pub use crate::position::PositionSpan;
+pub use crate::position::{AnchorId, NodeId, PositionSpan};
 pub use crate::scanner::ScanError;
 #[cfg(feature = "source_mapping")]
-pub use crate::source_map::{
-    NodeId, SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport,
-};
+pub use crate::source_map::{SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport};
 #[cfg(feature = "source_mapping")]
 pub use crate::source_map_utils::{
     node_preview, node_type_name, parse_yaml_file_with_source_map, parse_yaml_with_source_map,

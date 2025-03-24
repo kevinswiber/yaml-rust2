@@ -15,7 +15,6 @@ use hashlink::LinkedHashMap;
 use crate::parser::{Event, MarkedEventReceiver, Parser, Tag};
 use crate::position::PositionTracker;
 use crate::scanner::{Marker, ScanError, TMappingStyle, TScalarStyle};
-use crate::{AnchorId, NodeId};
 
 /// A YAML node is stored as this `Yaml` enumeration, which provides an easy way to
 /// access your YAML document.
@@ -51,7 +50,7 @@ pub enum Yaml {
     /// Insertion order will match the order of insertion into the map.
     Hash(Hash),
     /// Alias, not fully supported yet.
-    Alias(AnchorId),
+    Alias(usize),
     /// YAML null, e.g. `null` or `~`.
     Null,
     /// Accessing a nonexistent node via the Index trait returns `BadValue`. This
@@ -84,16 +83,16 @@ pub struct YamlLoader {
     docs: Vec<Yaml>,
     // states
     // (current node, anchor_id) tuple
-    doc_stack: Vec<(Yaml, AnchorId)>,
+    doc_stack: Vec<(Yaml, usize)>,
     key_stack: Vec<Yaml>,
-    anchor_map: BTreeMap<AnchorId, Yaml>,
+    anchor_map: BTreeMap<usize, Yaml>,
     /// Position tracker for anchor and alias management
     position_tracker: PositionTracker,
     /// An error, if one was encountered.
     error: Option<ScanError>,
     // Track anchor names for emitting
-    anchor_names: BTreeMap<AnchorId, String>,
-    next_anchor_id: AnchorId,
+    anchor_names: BTreeMap<usize, String>,
+    next_anchor_id: usize,
     /// Whether to tolerate duplicate keys
     tolerate_duplicate_keys: bool,
 }
@@ -108,7 +107,7 @@ impl Default for YamlLoader {
             position_tracker: PositionTracker::new(),
             error: None,
             anchor_names: BTreeMap::new(),
-            next_anchor_id: AnchorId::new(1),
+            next_anchor_id: 1,
             tolerate_duplicate_keys: false,
         }
     }
@@ -149,9 +148,9 @@ impl YamlLoader {
     /// Note: Currently this method is not actively used as anchor tracking is primarily
     /// handled through the position_tracker, but it's kept for potential future use.
     #[allow(dead_code)]
-    fn register_anchor(&mut self, name: String) -> AnchorId {
+    fn register_anchor(&mut self, name: String) -> usize {
         let id = self.next_anchor_id;
-        self.next_anchor_id = AnchorId::new(self.next_anchor_id.value() + 1);
+        self.next_anchor_id += 1;
         self.anchor_names.insert(id, name);
         id
     }
@@ -178,7 +177,7 @@ impl YamlLoader {
                 self.doc_stack.push((Yaml::Array(Vec::new()), aid));
 
                 // If this is an anchor, store it in position_tracker
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     let empty_array = Yaml::Array(Vec::new());
                     self.position_tracker.track_anchor(aid, mark);
                     self.position_tracker.store_anchor_node(aid, empty_array);
@@ -198,7 +197,7 @@ impl YamlLoader {
                     .position_tracker
                     .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
 
-                let node = if aid > AnchorId::new(0) {
+                let node = if aid > 0 {
                     if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
                         // If it's an alias reference, get the referenced node from position_tracker
                         referenced_node.clone()
@@ -216,7 +215,7 @@ impl YamlLoader {
                 self.doc_stack.push((node, aid));
                 self.key_stack.push(Yaml::BadValue);
 
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     self.position_tracker.track_anchor(aid, mark);
                     self.position_tracker
                         .store_anchor_node(aid, Yaml::Hash(Hash::new()));
@@ -266,7 +265,7 @@ impl YamlLoader {
                     Yaml::from_str(&v)
                 };
 
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     if !self.anchor_names.contains_key(&aid) {
                         self.anchor_names.insert(aid, v);
                     }
@@ -281,14 +280,14 @@ impl YamlLoader {
 
                 // Create the alias node as before
                 let n = Yaml::Alias(id);
-                self.insert_new_node((n, AnchorId::new(0)), mark)?;
+                self.insert_new_node((n, 0), mark)?;
             }
         }
         Ok(())
     }
 
-    fn insert_new_node(&mut self, node: (Yaml, AnchorId), mark: Marker) -> Result<(), ScanError> {
-        if node.1 > AnchorId::new(0) {
+    fn insert_new_node(&mut self, node: (Yaml, usize), mark: Marker) -> Result<(), ScanError> {
+        if node.1 > 0 {
             // Store the node in position_tracker instead of anchor_map
             self.position_tracker
                 .store_anchor_node(node.1, node.0.clone());
@@ -432,7 +431,7 @@ impl YamlLoader {
     }
 
     /// Get the anchor name for a given ID
-    pub fn get_anchor_name(&self, id: AnchorId) -> Option<&str> {
+    pub fn get_anchor_name(&self, id: usize) -> Option<&str> {
         self.anchor_names.get(&id).map(|s| s.as_str())
     }
 
@@ -448,7 +447,7 @@ impl YamlLoader {
     /// # Returns
     ///
     /// The anchor ID if the node is anchored, or None otherwise
-    pub fn get_anchor_id(&self, node: &Yaml) -> Option<AnchorId> {
+    pub fn get_anchor_id(&self, node: &Yaml) -> Option<usize> {
         // First try using position_tracker to find the anchor ID
         if let Some(id) = self.position_tracker.find_anchor_id(node) {
             return Some(id);
@@ -723,447 +722,6 @@ pub fn $name(self) -> Option<$t> {
     ); // WARNING: Do not remove this parenthesis or add an additional one.
 ); // WARNING: Do not add an additional parenthesis after this one.
 
-impl Yaml {
-    define_as!(as_bool, bool, Boolean);
-    define_as!(as_i64, i64, Integer);
-
-    define_as_ref!(as_str, &str, String);
-    define_as_ref!(as_hash, &Hash, Hash);
-    define_as_ref!(as_vec, &Array, Array);
-
-    define_as_mut_ref!(as_mut_hash, &mut Hash, Hash);
-    define_as_mut_ref!(as_mut_vec, &mut Array, Array);
-
-    define_into!(into_bool, bool, Boolean);
-    define_into!(into_i64, i64, Integer);
-    define_into!(into_string, String, String);
-    define_into!(into_hash, Hash, Hash);
-    define_into!(into_vec, Array, Array);
-
-    /// Return whether `self` is a [`Yaml::Null`] node.
-    #[must_use]
-    pub fn is_null(&self) -> bool {
-        matches!(*self, Yaml::Null)
-    }
-
-    /// Return whether `self` is a [`Yaml::BadValue`] node.
-    #[must_use]
-    pub fn is_badvalue(&self) -> bool {
-        matches!(*self, Yaml::BadValue)
-    }
-
-    /// Return whether `self` is a [`Yaml::Array`] node.
-    #[must_use]
-    pub fn is_array(&self) -> bool {
-        matches!(*self, Yaml::Array(_))
-    }
-
-    /// Return whether `self` is a [`Yaml::Hash`] node.
-    #[must_use]
-    pub fn is_hash(&self) -> bool {
-        matches!(*self, Yaml::Hash(_))
-    }
-
-    /// Return the `f64` value contained in this YAML node.
-    ///
-    /// If the node is not a [`Yaml::Real`] YAML node or its contents is not a valid `f64` string,
-    /// `None` is returned.
-    #[must_use]
-    pub fn as_f64(&self) -> Option<f64> {
-        if let Yaml::Real(ref v) = self {
-            parse_f64(v)
-        } else {
-            None
-        }
-    }
-
-    /// Return the `f64` value contained in this YAML node.
-    ///
-    /// If the node is not a [`Yaml::Real`] YAML node or its contents is not a valid `f64` string,
-    /// `None` is returned.
-    #[must_use]
-    pub fn into_f64(self) -> Option<f64> {
-        self.as_f64()
-    }
-
-    /// If a value is null or otherwise bad (see variants), consume it and
-    /// replace it with a given value `other`. Otherwise, return self unchanged.
-    ///
-    /// ```
-    /// use yaml_rust2::yaml::Yaml;
-    ///
-    /// assert_eq!(Yaml::BadValue.or(Yaml::Integer(3)),  Yaml::Integer(3));
-    /// assert_eq!(Yaml::Integer(3).or(Yaml::Integer(7)),  Yaml::Integer(3));
-    /// ```
-    #[must_use]
-    pub fn or(self, other: Self) -> Self {
-        match self {
-            Yaml::BadValue | Yaml::Null => other,
-            this => this,
-        }
-    }
-
-    /// See `or` for behavior. This performs the same operations, but with
-    /// borrowed values for less linear pipelines.
-    #[must_use]
-    pub fn borrowed_or<'a>(&'a self, other: &'a Self) -> &'a Self {
-        match self {
-            Yaml::BadValue | Yaml::Null => other,
-            this => this,
-        }
-    }
-}
-
-#[allow(clippy::should_implement_trait)]
-impl Yaml {
-    /// Convert a string to a [`Yaml`] node.
-    ///
-    /// [`Yaml`] does not implement [`std::str::FromStr`] since conversion may not fail. This
-    /// function falls back to [`Yaml::String`] if nothing else matches.
-    ///
-    /// # Examples
-    /// ```
-    /// # use yaml_rust2::yaml::Yaml;
-    /// assert!(matches!(Yaml::from_str("42"), Yaml::Integer(42)));
-    /// assert!(matches!(Yaml::from_str("0x2A"), Yaml::Integer(42)));
-    /// assert!(matches!(Yaml::from_str("0o52"), Yaml::Integer(42)));
-    /// assert!(matches!(Yaml::from_str("~"), Yaml::Null));
-    /// assert!(matches!(Yaml::from_str("null"), Yaml::Null));
-    /// assert!(matches!(Yaml::from_str("true"), Yaml::Boolean(true)));
-    /// assert!(matches!(Yaml::from_str("3.14"), Yaml::Real(_)));
-    /// assert!(matches!(Yaml::from_str("foo"), Yaml::String(_)));
-    /// ```
-    #[must_use]
-    pub fn from_str(v: &str) -> Yaml {
-        if let Some(number) = v.strip_prefix("0x") {
-            if let Ok(i) = i64::from_str_radix(number, 16) {
-                return Yaml::Integer(i);
-            }
-        } else if let Some(number) = v.strip_prefix("0o") {
-            if let Ok(i) = i64::from_str_radix(number, 8) {
-                return Yaml::Integer(i);
-            }
-        } else if let Some(number) = v.strip_prefix('+') {
-            if let Ok(i) = number.parse::<i64>() {
-                return Yaml::Integer(i);
-            }
-        }
-        match v {
-            "" | "~" | "null" => Yaml::Null,
-            "true" => Yaml::Boolean(true),
-            "false" => Yaml::Boolean(false),
-            _ => {
-                if let Ok(integer) = v.parse::<i64>() {
-                    Yaml::Integer(integer)
-                } else if parse_f64(v).is_some() {
-                    Yaml::Real(v.to_owned())
-                } else {
-                    Yaml::String(v.to_owned())
-                }
-            }
-        }
-    }
-}
-
-static BAD_VALUE: Yaml = Yaml::BadValue;
-impl<'a> Index<&'a str> for Yaml {
-    type Output = Yaml;
-
-    /// Perform indexing if `self` is a mapping.
-    ///
-    /// # Return
-    /// If `self` is a [`Yaml::Hash`], returns an immutable borrow to the value associated to the
-    /// given key in the hash.
-    ///
-    /// This function returns a [`Yaml::BadValue`] if the underlying [`type@Hash`] does not contain
-    /// [`Yaml::String`]`{idx}` as a key.
-    ///
-    /// This function also returns a [`Yaml::BadValue`] if `self` is not a [`Yaml::Hash`].
-    fn index(&self, idx: &'a str) -> &Yaml {
-        let key = Yaml::String(idx.to_owned());
-        match self.as_hash() {
-            Some(h) => h.get(&key).unwrap_or(&BAD_VALUE),
-            None => &BAD_VALUE,
-        }
-    }
-}
-
-impl<'a> IndexMut<&'a str> for Yaml {
-    /// Perform indexing if `self` is a mapping.
-    ///
-    /// Since we cannot return a mutable borrow to a static [`Yaml::BadValue`] as we return an
-    /// immutable one in [`Index<&'a str>`], this function panics on out of bounds.
-    ///
-    /// # Panics
-    /// This function panics if the given key is not contained in `self` (as per [`IndexMut`]).
-    ///
-    /// This function also panics if `self` is not a [`Yaml::Hash`].
-    fn index_mut(&mut self, idx: &'a str) -> &mut Yaml {
-        let key = Yaml::String(idx.to_owned());
-        match self.as_mut_hash() {
-            Some(h) => h.get_mut(&key).unwrap(),
-            None => panic!("Not a hash type"),
-        }
-    }
-}
-
-impl Index<usize> for Yaml {
-    type Output = Yaml;
-
-    /// Perform indexing if `self` is a sequence or a mapping.
-    ///
-    /// # Return
-    /// If `self` is a [`Yaml::Array`], returns an immutable borrow to the value located at the
-    /// given index in the array.
-    ///
-    /// Otherwise, if `self` is a [`Yaml::Hash`], returns a borrow to the value whose key is
-    /// [`Yaml::Integer`]`(idx)` (this would not work if the key is [`Yaml::String`]`("1")`.
-    ///
-    /// This function returns a [`Yaml::BadValue`] if the index given is out of range. If `self` is
-    /// a [`Yaml::Array`], this is when the index is bigger or equal to the length of the
-    /// underlying `Vec`. If `self` is a [`Yaml::Hash`], this is when the mapping sequence does not
-    /// contain [`Yaml::Integer`]`(idx)` as a key.
-    ///
-    /// This function also returns a [`Yaml::BadValue`] if `self` is not a [`Yaml::Array`] nor a
-    /// [`Yaml::Hash`].
-    fn index(&self, idx: usize) -> &Yaml {
-        if let Some(v) = self.as_vec() {
-            v.get(idx).unwrap_or(&BAD_VALUE)
-        } else if let Some(v) = self.as_hash() {
-            let key = Yaml::Integer(i64::try_from(idx).unwrap());
-            v.get(&key).unwrap_or(&BAD_VALUE)
-        } else {
-            &BAD_VALUE
-        }
-    }
-}
-
-impl IndexMut<usize> for Yaml {
-    /// Perform indexing if `self` is a sequence or a mapping.
-    ///
-    /// Since we cannot return a mutable borrow to a static [`Yaml::BadValue`] as we return an
-    /// immutable one in [`Index<usize>`], this function panics on out of bounds.
-    ///
-    /// # Panics
-    /// This function panics if the index given is out of range (as per [`IndexMut`]). If `self` is
-    /// a [`Yaml::Array`], this is when the index is bigger or equal to the length of the
-    /// underlying `Vec`. If `self` is a [`Yaml::Hash`], this is when the mapping sequence does not
-    /// contain [`Yaml::Integer`]`(idx)` as a key.
-    ///
-    /// This function also panics if `self` is not a [`Yaml::Array`] nor a [`Yaml::Hash`].
-    fn index_mut(&mut self, idx: usize) -> &mut Yaml {
-        match self {
-            Yaml::Array(sequence) => sequence.index_mut(idx),
-            Yaml::Hash(mapping) => {
-                let key = Yaml::Integer(i64::try_from(idx).unwrap());
-                mapping.get_mut(&key).unwrap()
-            }
-            _ => panic!("Attempting to index but `self` is not a sequence nor a mapping"),
-        }
-    }
-}
-
-impl IntoIterator for Yaml {
-    type Item = Yaml;
-    type IntoIter = YamlIter;
-
-    /// Extract the [`Array`] from `self` and iterate over it.
-    ///
-    /// If `self` is **not** of the [`Yaml::Array`] variant, this function will not panic or return
-    /// an error (as per the [`IntoIterator`] trait it cannot) but will instead return an iterator
-    /// over an empty [`Array`]. Callers have to ensure (using [`Yaml::is_array`], [`matches`] or
-    /// something similar) that the [`Yaml`] object is a [`Yaml::Array`] if they want to do error
-    /// handling.
-    ///
-    /// # Examples
-    /// ```
-    /// # use yaml_rust2::{Yaml, YamlLoader};
-    ///
-    /// // An array of 2 integers, 1 and 2.
-    /// let arr = &YamlLoader::load_from_str("- 1\n- 2").unwrap()[0];
-    ///
-    /// assert_eq!(arr.clone().into_iter().count(), 2);
-    /// assert_eq!(arr.clone().into_iter().next(), Some(Yaml::Integer(1)));
-    /// assert_eq!(arr.clone().into_iter().nth(1), Some(Yaml::Integer(2)));
-    ///
-    /// // An empty array returns an empty iterator.
-    /// let empty = Yaml::Array(vec![]);
-    /// assert_eq!(empty.into_iter().count(), 0);
-    ///
-    /// // A hash with 2 key-value pairs, `(a, b)` and `(c, d)`.
-    /// let hash = YamlLoader::load_from_str("a: b\nc: d").unwrap().remove(0);
-    /// // The hash has 2 elements.
-    /// assert_eq!(hash.as_hash().unwrap().iter().count(), 2);
-    /// // But since `into_iter` can't be used with a `Yaml::Hash`, `into_iter` returns an empty
-    /// // iterator.
-    /// assert_eq!(hash.into_iter().count(), 0);
-    /// ```
-    fn into_iter(self) -> Self::IntoIter {
-        YamlIter {
-            yaml: self.into_vec().unwrap_or_default().into_iter(),
-        }
-    }
-}
-
-/// An iterator over a [`Yaml`] node.
-pub struct YamlIter {
-    yaml: std::vec::IntoIter<Yaml>,
-}
-
-impl Iterator for YamlIter {
-    type Item = Yaml;
-
-    fn next(&mut self) -> Option<Yaml> {
-        self.yaml.next()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::{YAMLDecodingTrap, Yaml, YamlDecoder};
-
-    #[test]
-    fn test_read_bom() {
-        let s = b"\xef\xbb\xbf---
-a: 1
-b: 2.2
-c: [1, 2]
-";
-        let out = YamlDecoder::read(s as &[u8]).decode().unwrap();
-        let doc = &out[0];
-        assert_eq!(doc["a"].as_i64().unwrap(), 1i64);
-        assert!((doc["b"].as_f64().unwrap() - 2.2f64).abs() <= f64::EPSILON);
-        assert_eq!(doc["c"][1].as_i64().unwrap(), 2i64);
-        assert!(doc["d"][0].is_badvalue());
-    }
-
-    #[test]
-    fn test_read_utf16le() {
-        let s = b"\xff\xfe-\x00-\x00-\x00
-\x00a\x00:\x00 \x001\x00
-\x00b\x00:\x00 \x002\x00.\x002\x00
-\x00c\x00:\x00 \x00[\x001\x00,\x00 \x002\x00]\x00
-\x00";
-        let out = YamlDecoder::read(s as &[u8]).decode().unwrap();
-        let doc = &out[0];
-        println!("GOT: {doc:?}");
-        assert_eq!(doc["a"].as_i64().unwrap(), 1i64);
-        assert!((doc["b"].as_f64().unwrap() - 2.2f64) <= f64::EPSILON);
-        assert_eq!(doc["c"][1].as_i64().unwrap(), 2i64);
-        assert!(doc["d"][0].is_badvalue());
-    }
-
-    #[test]
-    fn test_read_utf16be() {
-        let s = b"\xfe\xff\x00-\x00-\x00-\x00
-\x00a\x00:\x00 \x001\x00
-\x00b\x00:\x00 \x002\x00.\x002\x00
-\x00c\x00:\x00 \x00[\x001\x00,\x00 \x002\x00]\x00
-";
-        let out = YamlDecoder::read(s as &[u8]).decode().unwrap();
-        let doc = &out[0];
-        println!("GOT: {doc:?}");
-        assert_eq!(doc["a"].as_i64().unwrap(), 1i64);
-        assert!((doc["b"].as_f64().unwrap() - 2.2f64).abs() <= f64::EPSILON);
-        assert_eq!(doc["c"][1].as_i64().unwrap(), 2i64);
-        assert!(doc["d"][0].is_badvalue());
-    }
-
-    #[test]
-    fn test_read_utf16le_nobom() {
-        let s = b"-\x00-\x00-\x00
-\x00a\x00:\x00 \x001\x00
-\x00b\x00:\x00 \x002\x00.\x002\x00
-\x00c\x00:\x00 \x00[\x001\x00,\x00 \x002\x00]\x00
-\x00";
-        let out = YamlDecoder::read(s as &[u8]).decode().unwrap();
-        let doc = &out[0];
-        println!("GOT: {doc:?}");
-        assert_eq!(doc["a"].as_i64().unwrap(), 1i64);
-        assert!((doc["b"].as_f64().unwrap() - 2.2f64).abs() <= f64::EPSILON);
-        assert_eq!(doc["c"][1].as_i64().unwrap(), 2i64);
-        assert!(doc["d"][0].is_badvalue());
-    }
-
-    #[test]
-    fn test_read_trap() {
-        let s = b"---
-a\xa9: 1
-b: 2.2
-c: [1, 2]
-";
-        let out = YamlDecoder::read(s as &[u8])
-            .encoding_trap(YAMLDecodingTrap::Ignore)
-            .decode()
-            .unwrap();
-        let doc = &out[0];
-        println!("GOT: {doc:?}");
-        assert_eq!(doc["a"].as_i64().unwrap(), 1i64);
-        assert!((doc["b"].as_f64().unwrap() - 2.2f64).abs() <= f64::EPSILON);
-        assert_eq!(doc["c"][1].as_i64().unwrap(), 2i64);
-        assert!(doc["d"][0].is_badvalue());
-    }
-
-    #[test]
-    fn test_or() {
-        assert_eq!(Yaml::Null.or(Yaml::Integer(3)), Yaml::Integer(3));
-        assert_eq!(Yaml::Integer(3).or(Yaml::Integer(7)), Yaml::Integer(3));
-    }
-}
-
-/// A YAML document loader that provides enhanced position tracking capabilities.
-///
-/// This loader integrates with the `PositionTracker` to maintain detailed position information
-/// for YAML constructs, with particular emphasis on tracking anchor positions and the nodes
-/// they reference. Unlike the basic `YamlLoader`, it maintains complete information about
-/// where anchors are defined and what nodes they reference, which is essential for
-/// more advanced YAML processing tasks.
-///
-/// # Features
-///
-/// - Tracks both positions and content of anchored nodes
-/// - Resolves aliases with complete node content
-/// - Maintains the relationship between anchors and their positions
-/// - Provides access to the underlying position tracking system
-///
-/// # Example
-///
-/// ```
-/// use yaml_rust2::yaml::PositionTrackedLoader;
-/// use yaml_rust2::Yaml;
-///
-/// let yaml_str = "
-/// anchors:
-///   seq: &seq_anchor [1, 2, 3]
-///   map: &map_anchor {a: 1, b: 2}
-/// references:
-///   seq_ref: *seq_anchor
-///   map_ref: *map_anchor
-/// ";
-///
-/// let docs = PositionTrackedLoader::load_from_str(yaml_str).unwrap();
-/// // Now docs contains the YAML documents with all anchors and aliases properly resolved
-/// ```
-#[derive(Default)]
-pub struct PositionTrackedLoader {
-    /// The different YAML documents that are loaded.
-    docs: Vec<Yaml>,
-    // states
-    // (current node, anchor_id) tuple
-    doc_stack: Vec<(Yaml, AnchorId)>,
-    key_stack: Vec<Yaml>,
-    /// Position tracker that handles anchor nodes
-    /// Using RefCell for interior mutability
-    position_tracker: std::cell::RefCell<PositionTracker>,
-    /// An error, if one was encountered.
-    error: Option<ScanError>,
-    // Track anchor names for emitting
-    anchor_names: BTreeMap<AnchorId, String>,
-    next_anchor_id: AnchorId,
-    /// Whether to tolerate duplicate keys
-    tolerate_duplicate_keys: bool,
-}
-
 impl PositionTrackedLoader {
     /// Set whether to tolerate duplicate keys in mappings
     ///
@@ -1180,9 +738,9 @@ impl PositionTrackedLoader {
     /// Note: Currently this method is not actively used as anchor tracking is primarily
     /// handled through the position_tracker, but it's kept for potential future use.
     #[allow(dead_code)]
-    fn register_anchor(&mut self, name: String) -> AnchorId {
+    fn register_anchor(&mut self, name: String) -> usize {
         let id = self.next_anchor_id;
-        self.next_anchor_id = AnchorId::new(self.next_anchor_id.value() + 1);
+        self.next_anchor_id += 1;
         self.anchor_names.insert(id, name);
         id
     }
@@ -1190,7 +748,7 @@ impl PositionTrackedLoader {
     /// Track the current node with its path
     ///
     /// This method constructs a node path from the current stack and registers it with the position tracker
-    fn track_current_node_position(&mut self, mark: Marker) -> NodeId {
+    fn track_current_node_position(&mut self, mark: Marker) -> usize {
         // Use a simple path format to avoid string manipulation complexity
         let path = format!(
             "doc{}.node{}",
@@ -1228,7 +786,7 @@ impl PositionTrackedLoader {
                 self.doc_stack.push((node.clone(), aid));
 
                 // If this is an anchor, store it in position_tracker
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     self.position_tracker_mut().track_anchor(aid, mark);
                     // Use the same node instance instead of creating a new one
                     self.position_tracker_mut().store_anchor_node(aid, node);
@@ -1240,7 +798,7 @@ impl PositionTrackedLoader {
             }
             Event::MappingStart(aid, _, _) => {
                 // Create a single hash instance that will be used consistently
-                let node = if aid > AnchorId::new(0) {
+                let node = if aid > 0 {
                     if let Some(referenced_node) =
                         self.position_tracker.borrow().get_anchor_yaml(aid)
                     {
@@ -1263,7 +821,7 @@ impl PositionTrackedLoader {
                 self.doc_stack.push((node.clone(), aid));
                 self.key_stack.push(Yaml::BadValue);
 
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     self.position_tracker_mut().track_anchor(aid, mark);
                     // Use the same node instance instead of creating a new one
                     self.position_tracker_mut().store_anchor_node(aid, node);
@@ -1309,7 +867,7 @@ impl PositionTrackedLoader {
                     Yaml::from_str(&v)
                 };
 
-                if aid > AnchorId::new(0) {
+                if aid > 0 {
                     if !self.anchor_names.contains_key(&aid) {
                         self.anchor_names.insert(aid, v);
                     }
@@ -1327,16 +885,16 @@ impl PositionTrackedLoader {
 
                 // Create the alias node as before
                 let n = Yaml::Alias(id);
-                self.insert_new_node((n, AnchorId::new(0)), mark)?;
+                self.insert_new_node((n, 0), mark)?;
             }
         }
         Ok(())
     }
 
-    fn insert_new_node(&mut self, node: (Yaml, AnchorId), mark: Marker) -> Result<(), ScanError> {
+    fn insert_new_node(&mut self, node: (Yaml, usize), mark: Marker) -> Result<(), ScanError> {
         // Store the original node for later reference to maintain identity
         let original_node = node.0.clone();
-        if node.1 > AnchorId::new(0) {
+        if node.1 > 0 {
             // Store the node in position_tracker instead of anchor_map
             self.position_tracker_mut()
                 .store_anchor_node(node.1, original_node.clone());
@@ -1499,7 +1057,7 @@ impl PositionTrackedLoader {
 
     /// Get the name of an anchor by ID.
     #[must_use]
-    pub fn get_anchor_name(&self, id: AnchorId) -> Option<&str> {
+    pub fn get_anchor_name(&self, id: usize) -> Option<&str> {
         self.anchor_names.get(&id).map(|s| s.as_ref())
     }
 
@@ -1544,10 +1102,7 @@ impl PositionTrackedLoader {
     ///
     /// The position span of the anchor, or None if not found
     #[must_use]
-    pub fn get_anchor_position(
-        &self,
-        anchor_id: AnchorId,
-    ) -> Option<crate::position::PositionSpan> {
+    pub fn get_anchor_position(&self, anchor_id: usize) -> Option<crate::position::PositionSpan> {
         self.position_tracker
             .borrow()
             .get_anchor_position(anchor_id)
@@ -1583,7 +1138,7 @@ impl PositionTrackedLoader {
     ///
     /// The YAML node associated with the anchor, or None if not found
     #[must_use]
-    pub fn get_anchor_yaml(&self, anchor_id: AnchorId) -> Option<Yaml> {
+    pub fn get_anchor_yaml(&self, anchor_id: usize) -> Option<Yaml> {
         self.position_tracker.borrow().get_anchor_yaml(anchor_id)
     }
 
@@ -1602,40 +1157,43 @@ impl PositionTrackedLoader {
     fn collect_position_spans(
         &self,
         node: &Yaml,
-        spans: &mut HashMap<NodeId, crate::position::PositionSpan>,
+        spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
     ) {
         // Calculate the node hash for consistent identification
         let node_hash = crate::position::PositionTracker::calculate_node_hash(node);
 
-        // Try to get the node ID from the position tracker
-        let tracker = self.position_tracker();
-        let node_id = tracker.find_node_id(node).unwrap_or_else(|| {
-            // If no ID exists, create a synthetic ID based on the hash
-            NodeId::new(node_hash as usize)
-        });
+        // Try to get the canonical node instance from the position tracker
+        let canonical_node = self.position_tracker.borrow().get_node_by_hash(node_hash);
 
+        // Use the canonical node pointer if available, otherwise use the provided node
+        let node_ptr = if let Some(ref canonical) = canonical_node {
+            canonical as *const Yaml
+        } else {
+            node as *const Yaml
+        };
         // Use the position_tracker method which already returns a Ref<PositionTracker>
+        let tracker = self.position_tracker();
 
         // Helper function to add a default span for nodes that don't have positions yet
         fn ensure_node_has_span(
-            node_id: NodeId,
-            spans: &mut HashMap<NodeId, crate::position::PositionSpan>,
+            node: &Yaml,
+            spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
             default_pos: crate::scanner::Marker,
         ) {
             // If this node doesn't have a span yet, add one with a default position
-            if !spans.contains_key(&node_id) {
+            if !spans.contains_key(&(node as *const Yaml)) {
                 let span = crate::position::PositionSpan::new(default_pos);
-                spans.insert(node_id, span);
+                spans.insert(node as *const Yaml, span);
             }
         }
 
         // Helper function to set an end position for a node if it doesn't have one
         fn ensure_node_has_end_pos(
-            node_id: NodeId,
-            spans: &mut HashMap<NodeId, crate::position::PositionSpan>,
+            node: &Yaml,
+            spans: &mut HashMap<*const Yaml, crate::position::PositionSpan>,
             end_pos: crate::scanner::Marker,
         ) {
-            if let Some(span) = spans.get_mut(&node_id) {
+            if let Some(span) = spans.get_mut(&(node as *const Yaml)) {
                 if span.end.is_none() {
                     span.set_end(end_pos);
                 }
@@ -1643,7 +1201,9 @@ impl PositionTrackedLoader {
         }
 
         // First check if we already have a span for this node with an end position
-        let has_complete_span = spans.get(&node_id).map_or(false, |span| span.end.is_some());
+        let has_complete_span = spans
+            .get(&node_ptr)
+            .map_or(false, |span| span.end.is_some());
 
         if has_complete_span {
             // If node already has both start and end positions, nothing to do
@@ -1651,12 +1211,12 @@ impl PositionTrackedLoader {
         }
 
         // Try to find a position for this node using various methods
-        if !spans.contains_key(&node_id) {
+        if !spans.contains_key(&node_ptr) {
             // 1. Check if this is an anchored node
             if let Some(anchor_id) = tracker.find_anchor_id(node) {
                 if let Some(pos) = tracker.get_anchor_position(anchor_id) {
                     // If we have an anchor position, use it directly
-                    spans.insert(node_id, pos);
+                    spans.insert(node_ptr, pos);
                 }
             }
             // 2. Try to find the node by its content hash
@@ -1664,7 +1224,7 @@ impl PositionTrackedLoader {
                 let hash = crate::position::PositionTracker::calculate_node_hash(node);
                 if let Some(pos) = tracker.get_position_by_hash(hash) {
                     // If we found a position for this node's hash, use it directly
-                    spans.insert(node_id, pos);
+                    spans.insert(node_ptr, pos);
                 }
             }
         }
@@ -1672,11 +1232,11 @@ impl PositionTrackedLoader {
         // Ensure parent nodes have positions before processing children
         // Create a default position with line 1, column 1 for any nodes without real positions
         let default_pos = crate::scanner::Marker::new(0, 1, 1);
-        ensure_node_has_span(node_id, spans, default_pos);
+        ensure_node_has_span(&canonical_node.as_ref().unwrap_or(node), spans, default_pos);
 
         // Get the current span for this node for reference by children
         let current_span = spans
-            .get(&node_id)
+            .get(&node_ptr)
             .cloned()
             .unwrap_or_else(|| crate::position::PositionSpan::new(default_pos));
 
@@ -1698,21 +1258,18 @@ impl PositionTrackedLoader {
                         current_span.start.line(),
                         current_span.start.col() + index * 2,
                     );
-
-                    // Get item ID
-                    let item_hash = crate::position::PositionTracker::calculate_node_hash(item);
-                    let item_id = self
-                        .position_tracker()
-                        .find_node_id(item)
-                        .unwrap_or_else(|| {
-                            // If no ID exists, create a synthetic ID based on the hash
-                            NodeId::new(item_hash as usize)
-                        });
-
-                    ensure_node_has_span(item_id, spans, offset_pos);
+                    ensure_node_has_span(item, spans, offset_pos);
 
                     // Update the last end position based on the item's end position
-                    let item_span = spans.get(&item_id).cloned();
+                    // Calculate item hash and get canonical instance
+                    let item_hash = crate::position::PositionTracker::calculate_node_hash(item);
+                    let canonical_item = self.position_tracker.borrow().get_node_by_hash(item_hash);
+                    let item_ptr = if let Some(ref canonical) = canonical_item {
+                        canonical as *const Yaml
+                    } else {
+                        item as *const Yaml
+                    };
+                    let item_span = spans.get(&item_ptr).cloned();
                     if let Some(span) = item_span {
                         if let Some(item_end) = span.end {
                             last_end_pos = item_end;
@@ -1723,34 +1280,20 @@ impl PositionTrackedLoader {
                                 span.start.line(),
                                 span.start.col() + 10, // Arbitrary width
                             );
-                            ensure_node_has_end_pos(item_id, spans, estimated_end);
+                            ensure_node_has_end_pos(item, spans, estimated_end);
                             last_end_pos = estimated_end;
                         }
                     }
                 }
 
                 // Set the array's end position based on its last item
-                // For flow sequences, make sure to account for the closing bracket
-                // Check if this is likely a flow sequence by looking at the array's start position
-                let is_flow_sequence = self.position_tracker().is_flow_sequence(node_id);
-
-                let array_end_pos = if is_flow_sequence {
-                    // For flow sequences, end is on the same line, just a few columns after the last item
-                    crate::scanner::Marker::new(
-                        0,
-                        last_end_pos.line(),
-                        last_end_pos.col() + 1, // +1 for closing bracket
-                    )
-                } else {
-                    // For block sequences, end is typically on a new line with the same indentation
-                    crate::scanner::Marker::new(
-                        0,
-                        last_end_pos.line() + 1,
-                        current_span.start.col(),
-                    )
-                };
-
-                ensure_node_has_end_pos(node_id, spans, array_end_pos);
+                // Add one line after the last item to account for array closing
+                let array_end_pos = crate::scanner::Marker::new(
+                    0,
+                    last_end_pos.line() + 1,
+                    current_span.start.col(),
+                );
+                ensure_node_has_end_pos(node, spans, array_end_pos);
             }
             Yaml::Hash(hash) => {
                 // Track the last processed value position to set the hash end
@@ -1768,40 +1311,27 @@ impl PositionTrackedLoader {
                         current_span.start.line(),
                         current_span.start.col() + 1,
                     );
-
-                    // Get key ID
-                    let key_hash = crate::position::PositionTracker::calculate_node_hash(key);
-                    let key_id = self
-                        .position_tracker()
-                        .find_node_id(key)
-                        .unwrap_or_else(|| {
-                            // If no ID exists, create a synthetic ID based on the hash
-                            NodeId::new(key_hash as usize)
-                        });
-
-                    ensure_node_has_span(key_id, spans, key_pos);
+                    ensure_node_has_span(key, spans, key_pos);
 
                     let value_pos = crate::scanner::Marker::new(
                         0,
                         current_span.start.line(),
                         current_span.start.col() + 2,
                     );
-
-                    // Get value ID
-                    let value_hash = crate::position::PositionTracker::calculate_node_hash(value);
-                    let value_id =
-                        self.position_tracker()
-                            .find_node_id(value)
-                            .unwrap_or_else(|| {
-                                // If no ID exists, create a synthetic ID based on the hash
-                                NodeId::new(value_hash as usize)
-                            });
-
-                    ensure_node_has_span(value_id, spans, value_pos);
+                    ensure_node_has_span(value, spans, value_pos);
 
                     // Set end positions for key and value if they don't have them
                     // Key end is right before value start
-                    let value_span = spans.get(&value_id).cloned();
+                    // Calculate value hash and get canonical instance
+                    let value_hash = crate::position::PositionTracker::calculate_node_hash(value);
+                    let canonical_value =
+                        self.position_tracker.borrow().get_node_by_hash(value_hash);
+                    let value_ptr = if let Some(ref canonical) = canonical_value {
+                        canonical as *const Yaml
+                    } else {
+                        value as *const Yaml
+                    };
+                    let value_span = spans.get(&value_ptr).cloned();
                     if let Some(span) = value_span {
                         // Set key end position to be right before value
                         let key_col = if span.start.col() > 2 {
@@ -1810,7 +1340,7 @@ impl PositionTrackedLoader {
                             1 // Minimum column value
                         };
                         let key_end = crate::scanner::Marker::new(0, span.start.line(), key_col);
-                        ensure_node_has_end_pos(key_id, spans, key_end);
+                        ensure_node_has_end_pos(key, spans, key_end);
 
                         // Update the last end position based on the value's end position
                         if let Some(value_end) = span.end {
@@ -1822,33 +1352,20 @@ impl PositionTrackedLoader {
                                 span.start.line(),
                                 span.start.col() + 10, // Arbitrary width
                             );
-                            ensure_node_has_end_pos(value_id, spans, estimated_end);
+                            ensure_node_has_end_pos(value, spans, estimated_end);
                             last_end_pos = estimated_end;
                         }
                     }
                 }
 
                 // Set the hash's end position based on its last value
-                // Check if this is likely a flow mapping by looking at the hash's start position
-                let is_flow_mapping = self.position_tracker().is_flow_mapping(node_id);
-
-                let hash_end_pos = if is_flow_mapping {
-                    // For flow mappings, end is on the same line, just a column after the last value
-                    crate::scanner::Marker::new(
-                        0,
-                        last_end_pos.line(),
-                        last_end_pos.col() + 1, // +1 for closing brace
-                    )
-                } else {
-                    // For block mappings, end is typically on a new line with the same indentation
-                    crate::scanner::Marker::new(
-                        0,
-                        last_end_pos.line() + 1,
-                        current_span.start.col(),
-                    )
-                };
-
-                ensure_node_has_end_pos(node_id, spans, hash_end_pos);
+                // Add one line after the last value to account for hash closing
+                let hash_end_pos = crate::scanner::Marker::new(
+                    0,
+                    last_end_pos.line() + 1,
+                    current_span.start.col(),
+                );
+                ensure_node_has_end_pos(node, spans, hash_end_pos);
             }
             // For scalar nodes, estimate an end position based on the content
             Yaml::String(s) => {
@@ -1857,7 +1374,7 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + s.len(),
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             Yaml::Integer(i) => {
                 let len = i.to_string().len();
@@ -1866,7 +1383,7 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + len,
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             Yaml::Real(r) => {
                 let len = r.len();
@@ -1875,7 +1392,7 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + len,
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             Yaml::Boolean(b) => {
                 let len = if *b { 4 } else { 5 }; // "true" or "false"
@@ -1884,7 +1401,7 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + len,
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             Yaml::Null => {
                 let end_pos = crate::scanner::Marker::new(
@@ -1892,7 +1409,7 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + 4, // "null"
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             Yaml::Alias(anchor_id) => {
                 let end_pos = crate::scanner::Marker::new(
@@ -1900,11 +1417,11 @@ impl PositionTrackedLoader {
                     current_span.start.line(),
                     current_span.start.col() + anchor_id.to_string().len() + 1,
                 );
-                ensure_node_has_end_pos(node_id, spans, end_pos);
+                ensure_node_has_end_pos(node, spans, end_pos);
             }
             _ => {
                 // For other types, just set the end position to be the same as the start
-                ensure_node_has_end_pos(node_id, spans, current_span.start);
+                ensure_node_has_end_pos(node, spans, current_span.start);
             }
         }
     }
@@ -2131,22 +1648,6 @@ impl PositionTrackedLoader {
         let mut path_components = Vec::new();
         build_node_paths(document, &mut path_components, &mut *position_tracker);
     }
-
-    fn lookup_node_id(&self, node: &Yaml) -> Option<NodeId> {
-        match self.position_tracker.borrow() {
-            position_tracker => {
-                if let Some(id) = position_tracker.find_node_id(node) {
-                    return Some(id);
-                }
-                // let hash = PositionTracker::calculate_node_hash(node);
-                if let Some(id) = position_tracker.get_node_hash_by_content(node) {
-                    return Some(id);
-                }
-            }
-            _ => (),
-        }
-        None
-    }
 }
 
 impl MarkedEventReceiver for PositionTrackedLoader {
@@ -2190,7 +1691,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
         match &ev {
             Event::MappingStart(anchor_id, _, _style) => {
                 // For mappings, store the start position
-                if *anchor_id > AnchorId::new(0) {
+                if *anchor_id > 0 {
                     // For anchored nodes, we track the anchor by ID
                     self.position_tracker
                         .borrow_mut()
@@ -2218,7 +1719,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
             }
             Event::SequenceStart(anchor_id, _) => {
                 // For sequences, store the start position
-                if *anchor_id > AnchorId::new(0) {
+                if *anchor_id > 0 {
                     // For anchored nodes, we track the anchor by ID
                     self.position_tracker
                         .borrow_mut()
@@ -2246,7 +1747,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
             }
             Event::Scalar(value, style, anchor_id, _tag) => {
                 // For scalars, store the position
-                if *anchor_id > AnchorId::new(0) {
+                if *anchor_id > 0 {
                     // For anchored nodes, we track the anchor by ID
                     self.position_tracker
                         .borrow_mut()
@@ -2366,10 +1867,12 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         eprintln!("*** Before fixing end positions ***");
         let array_nodes_count = node_spans
             .iter()
-            .filter(|(node_id, _)| {
-                // Check if the node is an array by using the position tracker's all_nodes map
-                if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
-                    matches!(node, Yaml::Array(_))
+            .filter(|(node_ptr, _)| {
+                if let Some(node) = unsafe { node_ptr.as_ref() } {
+                    match node {
+                        Yaml::Array(_) => true,
+                        _ => false,
+                    }
                 } else {
                     false
                 }
@@ -2378,15 +1881,17 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         eprintln!("Found {} array nodes in node_spans", array_nodes_count);
 
         // Print details of array nodes
-        for (node_id, span) in node_spans.iter().filter(|(node_id, _)| {
-            // Check if the node is an array by using the position tracker's all_nodes map
-            if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
-                matches!(node, Yaml::Array(_))
+        for (node_ptr, span) in node_spans.iter().filter(|(node_ptr, _)| {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
+                match node {
+                    Yaml::Array(_) => true,
+                    _ => false,
+                }
             } else {
                 false
             }
         }) {
-            if let Some(node) = self.position_tracker.borrow().get_node(*node_id) {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
                 if let Yaml::Array(arr) = node {
                     eprintln!(
                         "Array node with {} items at line {} col {}, end marker: {:?}",
@@ -2405,15 +1910,17 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
 
         // Debug output after checking end positions
         eprintln!("*** End position report ***");
-        for (node_id, span) in node_spans.iter().filter(|(node_id, _)| {
-            // Check if the node is an array by using the position tracker's all_nodes map
-            if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
-                matches!(node, Yaml::Array(_))
+        for (node_ptr, span) in node_spans.iter().filter(|(node_ptr, _)| {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
+                match node {
+                    Yaml::Array(_) => true,
+                    _ => false,
+                }
             } else {
                 false
             }
         }) {
-            if let Some(node) = self.position_tracker.borrow().get_node(*node_id) {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
                 if let Yaml::Array(arr) = node {
                     eprintln!(
                         "Array node with {} items at line {} col {}, end marker: {:?}",
@@ -2426,40 +1933,72 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
             }
         }
 
-        // Get the position tracker for accessing node positions
-        let position_tracker = self.position_tracker.borrow();
-
-        // Only set end positions based on actual data from the position tracker.
-        // We will not estimate or guess positions, only use what we know from parsing.
-        for (node_id, span) in node_spans.iter_mut() {
-            // Only do this for nodes without end positions
+        // Before building the source map, ensure all nodes have end positions
+        for (_node_ptr, span) in node_spans.iter_mut() {
+            // If a node has no end position, set one based on its start position
             if span.end.is_none() {
-                // Try to get the node from the position tracker
-                if let Some(tracker_span) = position_tracker.get_node_position(*node_id) {
-                    if tracker_span.end.is_some() {
-                        // The position tracker has an end position, use that
-                        span.end = tracker_span.end;
-                        eprintln!(
-                            "Used position tracker end position for node at ({},{})",
-                            span.start.line(),
-                            span.start.col()
-                        );
+                // Try to find a better end position by checking if this is a flow collection
+                let mut better_end_found = false;
+                let node_ptr = _node_ptr;
+
+                // Try to get the YAML node
+                if let Some(node) = unsafe { node_ptr.as_ref() } {
+                    match node {
+                        Yaml::Array(arr) => {
+                            // For arrays, set the end position to be the same line,
+                            // but a few columns after the start
+                            // This handles flow sequences like [1, 2, 3]
+                            let end_pos = crate::scanner::Marker::new(
+                                0,
+                                span.start.line(),
+                                span.start.col() + 10 + (arr.len() * 4), // Reasonable offset based on length
+                            );
+                            eprintln!(
+                                "Setting end position for array: {:?} -> {:?}",
+                                span, end_pos
+                            );
+                            span.end = Some(end_pos);
+                            better_end_found = true;
+                        }
+                        Yaml::Hash(hash) => {
+                            // For mappings, set the end position to be the same line,
+                            // but a few columns after the start
+                            // This handles flow mappings like {key: value}
+                            let end_pos = crate::scanner::Marker::new(
+                                0,
+                                span.start.line(),
+                                span.start.col() + 10 + (hash.len() * 8), // Reasonable offset based on length
+                            );
+                            span.end = Some(end_pos);
+                            better_end_found = true;
+                        }
+                        _ => {}
                     }
+                }
+
+                // If we didn't set a better end position, use the default (one line after)
+                if !better_end_found {
+                    // Create a reasonable end position (one line after start, same column)
+                    let end_pos =
+                        crate::scanner::Marker::new(0, span.start.line() + 1, span.start.col());
+                    span.end = Some(end_pos);
                 }
             }
         }
 
         // Debug output after setting end positions
         eprintln!("*** After fixing end positions ***");
-        for (node_id, span) in node_spans.iter().filter(|(node_id, _)| {
-            // Check if the node is an array by using the position tracker's all_nodes map
-            if let Some(node) = position_tracker.get_node(**node_id) {
-                matches!(node, Yaml::Array(_))
+        for (node_ptr, span) in node_spans.iter().filter(|(node_ptr, _)| {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
+                match node {
+                    Yaml::Array(_) => true,
+                    _ => false,
+                }
             } else {
                 false
             }
         }) {
-            if let Some(node) = position_tracker.get_node(*node_id) {
+            if let Some(node) = unsafe { node_ptr.as_ref() } {
                 if let Yaml::Array(arr) = node {
                     eprintln!(
                         "Array node with {} items at line {} col {}, end marker: {:?}",

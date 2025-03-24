@@ -14,27 +14,7 @@ use std::ops::Range;
 use crate::position::PositionSpan;
 use crate::scanner::Marker;
 use crate::yaml::Yaml;
-
-/// A unique identifier for a YAML node in the document.
-///
-/// This is used to create a stable reference to a node that can be used
-/// for mapping between the node and its source position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub(crate) usize);
-
-impl NodeId {
-    /// Create a new node ID with the given index.
-    #[must_use]
-    pub fn new(id: usize) -> Self {
-        NodeId(id)
-    }
-
-    /// Get the underlying ID value.
-    #[must_use]
-    pub fn value(&self) -> usize {
-        self.0
-    }
-}
+use crate::NodeId;
 
 /// A source location range in the YAML document.
 ///
@@ -276,8 +256,6 @@ where
         self.id_to_node.insert(id, node);
         id
     }
-    
-
 
     /// Register a node with its source location, using a specific ID.
     ///
@@ -475,14 +453,9 @@ where
     pub fn is_empty(&self) -> bool {
         self.id_to_node.is_empty()
     }
-    
+
     /// Get the position tracker associated with this source map.
     ///
-
-    
-
-    
-
 
     /// Clear the source map, removing all nodes and their locations.
     pub fn clear(&mut self) {
@@ -749,8 +722,6 @@ impl SourceMapBuilder {
         self.source_map.register_node(node, location)
     }
 
-
-    
     /// Build the source map from a YAML document.
     ///
     /// This method traverses the document and registers all nodes with their
@@ -760,7 +731,7 @@ impl SourceMapBuilder {
     /// # Arguments
     ///
     /// * `document` - The YAML document
-    /// * `position_spans` - A map of nodes to their position spans
+    /// * `position_spans` - A map of NodeIds to their position spans
     ///
     /// # Returns
     ///
@@ -768,40 +739,43 @@ impl SourceMapBuilder {
     pub fn build(
         mut self,
         document: &Yaml,
-        position_spans: &HashMap<*const Yaml, PositionSpan>,
+        position_spans: &HashMap<NodeId, PositionSpan>,
+        node_lookup: &impl Fn(&Yaml) -> Option<NodeId>,
     ) -> SourceMap<Yaml> {
         // Helper function to recursively register nodes
         fn register_nodes(
             builder: &mut SourceMapBuilder,
             node: &Yaml,
-            position_spans: &HashMap<*const Yaml, PositionSpan>,
+            position_spans: &HashMap<NodeId, PositionSpan>,
+            node_lookup: &impl Fn(&Yaml) -> Option<NodeId>,
         ) -> Option<NodeId> {
-            let node_ptr = node as *const Yaml;
-            let span = position_spans.get(&node_ptr)?;
+            // Use the lookup function to find the NodeId for this node
+            let node_id = node_lookup(node)?;
+            let span = position_spans.get(&node_id)?;
 
-            let node_id = builder.register_node(node.clone(), *span);
+            let registered_id = builder.register_node(node.clone(), *span);
 
             // Recursively register child nodes
             match node {
                 Yaml::Array(array) => {
                     for item in array {
-                        register_nodes(builder, item, position_spans);
+                        register_nodes(builder, item, position_spans, node_lookup);
                     }
                 }
                 Yaml::Hash(hash) => {
                     for (key, value) in hash {
-                        register_nodes(builder, key, position_spans);
-                        register_nodes(builder, value, position_spans);
+                        register_nodes(builder, key, position_spans, node_lookup);
+                        register_nodes(builder, value, position_spans, node_lookup);
                     }
                 }
                 _ => {}
             }
 
-            Some(node_id)
+            Some(registered_id)
         }
 
-        register_nodes(&mut self, document, position_spans);
-        
+        register_nodes(&mut self, document, position_spans, node_lookup);
+
         self.source_map
     }
 

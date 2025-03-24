@@ -10,7 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::parser::Parser;
-use crate::source_map::{NodeId, SourceLocation, SourceMap, SourceMapSupport};
+use crate::source_map::{SourceLocation, SourceMap, SourceMapSupport};
+use crate::NodeId;
 use crate::PositionTrackedLoader;
 use crate::Yaml;
 

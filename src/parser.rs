@@ -4,7 +4,10 @@
 //! compliance, and emits a stream of tokens that can be used by the [`crate::YamlLoader`] to
 //! construct the [`crate::Yaml`] object.
 
-use crate::scanner::{Marker, ScanError, Scanner, TMappingStyle, TScalarStyle, Token, TokenType};
+use crate::{
+    scanner::{Marker, ScanError, Scanner, TMappingStyle, TScalarStyle, Token, TokenType},
+    AnchorId, NodeId,
+};
 use std::collections::HashMap;
 
 /// Tag holds the handle and suffix of a YAML tag
@@ -30,16 +33,16 @@ pub enum Event {
     /// The end of a document (`...`)
     DocumentEnd,
     /// An alias to a previous anchor
-    Alias(usize),
+    Alias(AnchorId),
     /// A scalar value with style information
-    Scalar(String, TScalarStyle, usize, Option<Tag>),
+    Scalar(String, TScalarStyle, AnchorId, Option<Tag>),
     /// The start of a sequence
     ///
     /// Parameters:
     /// - anchor_id: usize
     /// - tag: Option<Tag>
     /// - style: Option<TSequenceStyle> - Added to distinguish between flow and block sequences
-    SequenceStart(usize, Option<Tag>),
+    SequenceStart(AnchorId, Option<Tag>),
     /// The end of a sequence
     SequenceEnd,
     /// The start of a mapping with style information
@@ -48,7 +51,7 @@ pub enum Event {
     /// - anchor_id: usize
     /// - tag: Option<Tag>
     /// - style: TMappingStyle
-    MappingStart(usize, Option<Tag>, TMappingStyle),
+    MappingStart(AnchorId, Option<Tag>, TMappingStyle),
     /// The end of a mapping
     MappingEnd,
 }
@@ -56,11 +59,11 @@ pub enum Event {
 impl Event {
     /// Create an empty scalar
     pub fn empty_scalar() -> Self {
-        Event::Scalar(String::new(), TScalarStyle::Plain, 0, None)
+        Event::Scalar(String::new(), TScalarStyle::Plain, AnchorId::new(0), None)
     }
 
     /// Create an empty scalar with anchor
-    pub fn empty_scalar_with_anchor(anchor_id: usize, tag: Option<Tag>) -> Self {
+    pub fn empty_scalar_with_anchor(anchor_id: AnchorId, tag: Option<Tag>) -> Self {
         Event::Scalar(String::new(), TScalarStyle::Plain, anchor_id, tag)
     }
 }
@@ -73,12 +76,12 @@ pub struct Parser<T> {
     token: Option<Token>,
     current: Option<(Event, Marker)>,
 
-    anchors: HashMap<String, usize>,
-    anchor_id: usize,
-    anchor_names: HashMap<usize, String>,
+    anchors: HashMap<String, AnchorId>,
+    anchor_id: AnchorId,
+    anchor_names: HashMap<AnchorId, String>,
     tags: HashMap<String, String>,
     keep_tags: bool,
-    
+
     /// Whether to tolerate duplicate keys in mappings
     ///
     /// When set to true, the parser will not error on duplicate keys
@@ -184,7 +187,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             token: None,
             current: None,
             anchors: HashMap::new(),
-            anchor_id: 1,
+            anchor_id: AnchorId::new(1),
             anchor_names: HashMap::new(),
             tags: HashMap::new(),
             keep_tags: false,
@@ -220,7 +223,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
         self.keep_tags = value;
         self
     }
-    
+
     /// Whether to tolerate duplicate keys in mappings.
     ///
     /// When set to true, the parser will not error on duplicate keys
@@ -238,7 +241,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
         self.tolerate_duplicate_keys = value;
         self
     }
-    
+
     /// Get the current value of the tolerate_duplicate_keys option
     pub fn get_tolerate_duplicate_keys(&self) -> bool {
         self.tolerate_duplicate_keys
@@ -291,14 +294,17 @@ impl<T: Iterator<Item = char>> Parser<T> {
                     // Use the find_error_position method to get a more accurate position for the error
                     // This is especially important for unclosed flow collections
                     let error_position = self.scanner.find_error_position();
-                    
+
                     // If we have unclosed flow collections, provide a more specific error message
                     if self.scanner.flow_level() > 0 {
-                        Err(ScanError::new(error_position, "unexpected end of stream while parsing flow collection"))
+                        Err(ScanError::new(
+                            error_position,
+                            "unexpected end of stream while parsing flow collection",
+                        ))
                     } else {
                         Err(ScanError::new(error_position, "unexpected eof"))
                     }
-                },
+                }
                 Some(e) => Err(e),
             },
             Some(tok) => Ok(tok),
@@ -809,10 +815,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
         Ok((Event::DocumentEnd, marker))
     }
 
-    fn process_anchor(&mut self, name: String) -> usize {
+    fn process_anchor(&mut self, name: String) -> AnchorId {
         // Always create a new ID for this anchor
         let new_id = self.anchor_id;
-        self.anchor_id += 1;
+        self.anchor_id = AnchorId::new(self.anchor_id.value() + 1);
         self.anchor_names.insert(new_id, name.clone());
         // Update the name->id mapping to point to the new ID
         self.anchors.insert(name, new_id);
@@ -825,7 +831,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
     }
 
     fn parse_node(&mut self, block: bool, indentless_sequence: bool) -> ParseResult {
-        let mut anchor_id = 0;
+        let mut anchor_id = AnchorId::new(0);
         let mut tag = None;
         match *self.peek_token()? {
             Token(_, TokenType::Alias(_)) => {
@@ -916,7 +922,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
-            Token(mark, _) if tag.is_some() || anchor_id > 0 => {
+            Token(mark, _) if tag.is_some() || anchor_id > AnchorId::new(0) => {
                 self.pop_state();
                 Ok((Event::empty_scalar_with_anchor(anchor_id, tag), mark))
             }
@@ -1102,7 +1108,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
             Token(mark, TokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
-                Ok((Event::MappingStart(0, None, TMappingStyle::Flow), mark))
+                Ok((
+                    Event::MappingStart(AnchorId::new(0), None, TMappingStyle::Flow),
+                    mark,
+                ))
             }
             _ => {
                 self.push_state(State::FlowSequenceEntry);
@@ -1277,10 +1286,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 let span = crate::position::PositionSpan::new(mark);
 
                 // For both flow and block mappings, track the start position
-                self.position_tracker.push(0, mark); // 0 = mapping
+                self.position_tracker.push(NodeId::new(0), mark); // 0 = mapping
 
                 // If this mapping has an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     self.position_tracker.track_anchor(*anchor_id, mark);
                     // Store an empty mapping node for the anchor
                     let empty_map = crate::yaml::Yaml::Hash(crate::yaml::Hash::new());
@@ -1292,9 +1301,14 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Event::MappingEnd => {
                 // For mappings, pop the start position from the stack
-                if let Some((0, start_mark)) = self.position_tracker.pop() {
-                    // Return a span with both start and end positions
-                    crate::position::PositionSpan::with_end(start_mark, mark)
+                if let Some((node_id, start_mark)) = self.position_tracker.pop() {
+                    if node_id == NodeId::new(0) {
+                        // Return a span with both start and end positions
+                        crate::position::PositionSpan::with_end(start_mark, mark)
+                    } else {
+                        // If no start position was found, just return the current position
+                        crate::position::PositionSpan::new(mark)
+                    }
                 } else {
                     // If no start position was found, just return the current position
                     crate::position::PositionSpan::new(mark)
@@ -1307,10 +1321,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 let span = crate::position::PositionSpan::new(mark);
 
                 // For both flow and block sequences, track the start position
-                self.position_tracker.push(1, mark); // 1 = sequence
+                self.position_tracker.push(NodeId::new(1), mark); // 1 = sequence
 
                 // If this sequence has an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     self.position_tracker.track_anchor(*anchor_id, mark);
                     // Store an empty sequence node for the anchor
                     let empty_seq = crate::yaml::Yaml::Array(Vec::new());
@@ -1322,9 +1336,14 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Event::SequenceEnd => {
                 // For sequences, pop the start position from the stack
-                if let Some((1, start_mark)) = self.position_tracker.pop() {
-                    // Return a span with both start and end positions
-                    crate::position::PositionSpan::with_end(start_mark, mark)
+                if let Some((node_id, start_mark)) = self.position_tracker.pop() {
+                    if node_id == NodeId::new(1) {
+                        // Return a span with both start and end positions
+                        crate::position::PositionSpan::with_end(start_mark, mark)
+                    } else {
+                        // If no start position was found, just return the current position
+                        crate::position::PositionSpan::new(mark)
+                    }
                 } else {
                     // If no start position was found, just return the current position
                     crate::position::PositionSpan::new(mark)
@@ -1337,7 +1356,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 let span = crate::position::PositionSpan::new(mark);
 
                 // If this scalar has an anchor, track it
-                if *anchor_id > 0 {
+                if *anchor_id > AnchorId::new(0) {
                     self.position_tracker.track_anchor(*anchor_id, mark);
 
                     // Store the scalar node with the proper conversion
@@ -1353,7 +1372,8 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 // Track all scalars regardless of anchor
                 let node = crate::yaml::Yaml::String(value.clone());
                 let node_hash = crate::position::PositionTracker::calculate_node_hash(&node);
-                self.position_tracker.track_node_with_hash(node_hash, mark, Some(node));
+                self.position_tracker
+                    .track_node_with_hash(node_hash, mark, Some(node));
 
                 span
             }
@@ -1370,14 +1390,19 @@ impl<T: Iterator<Item = char>> Parser<T> {
             // Document events
             Event::DocumentStart => {
                 // Create a position span for the document start
-                self.position_tracker.push(2, mark); // 2 = document
+                self.position_tracker.push(NodeId::new(2), mark); // 2 = document
                 crate::position::PositionSpan::new(mark)
             }
             Event::DocumentEnd => {
                 // For documents, pop the start position from the stack
-                if let Some((2, start_mark)) = self.position_tracker.pop() {
-                    // Return a span with both start and end positions
-                    crate::position::PositionSpan::with_end(start_mark, mark)
+                if let Some((node_id, start_mark)) = self.position_tracker.pop() {
+                    if node_id == NodeId::new(2) {
+                        // Return a span with both start and end positions
+                        crate::position::PositionSpan::with_end(start_mark, mark)
+                    } else {
+                        // If no start position was found, just return the current position
+                        crate::position::PositionSpan::new(mark)
+                    }
                 } else {
                     // If no start position was found, just return the current position
                     crate::position::PositionSpan::new(mark)
@@ -1390,7 +1415,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
     }
 
     /// Get the anchor names map
-    pub fn get_anchor_names(&self) -> &HashMap<usize, String> {
+    pub fn get_anchor_names(&self) -> &HashMap<AnchorId, String> {
         &self.anchor_names
     }
 }

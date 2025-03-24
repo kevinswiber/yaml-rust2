@@ -1,6 +1,7 @@
 //! YAML serialization helpers.
 
 use crate::yaml::{Hash, Yaml, YamlLoader};
+use crate::AnchorId;
 use std::collections::HashSet;
 use std::convert::From;
 use std::error::Error;
@@ -55,7 +56,7 @@ pub struct YamlEmitter<'a> {
     level: isize,
     multiline_strings: bool,
     // Track emitted anchors to avoid duplicates
-    emitted_anchors: HashSet<usize>,
+    emitted_anchors: HashSet<AnchorId>,
     // Reference to the YamlLoader for anchor names
     loader: Option<&'a YamlLoader>,
 }
