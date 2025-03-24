@@ -79,14 +79,6 @@ Based on our analysis and the compilation errors we've seen, here's a detailed g
    pub fn is_flow_mapping(&self, node_id: usize) -> bool { ... }
    ```
 
-2. Add public accessors for private fields that need to be accessed:
-   ```rust
-   #[cfg(feature = "source_mapping")]
-   pub fn get_node_from_all_nodes(&self, node_id: usize) -> Option<&Yaml> {
-       self.all_nodes.get(&node_id)
-   }
-   ```
-
 ### Step 3: Update the PositionTrackedLoader Implementation
 
 1. Modify the `collect_position_spans` method to work with `NodeId` instead of raw pointers:
@@ -174,15 +166,43 @@ Based on our analysis and the compilation errors we've seen, here's a detailed g
    - Flow collections with complex nested structures
    - Flow collections with anchors and aliases
 
-### Notes on Existing Implementation
+### Implementation Progress
 
-The following issues need to be addressed in the existing implementation:
+We've begun the implementation with the following changes:
 
-1. Private field `all_nodes` in `PositionTracker` requires accessor methods
-2. Type mismatch between `usize` and `NodeId` in multiple methods
-3. The `build` method interface changed to require a lookup function
-4. Several methods in yaml.rs try to directly access `position_tracker.all_nodes`
-5. The `u64.abs()` method does not exist, but is being called on content hash values
-6. Type annotations are needed for several HashMaps
+1. ✅ Added `is_flow_sequence` and `is_flow_mapping` heuristic methods to `PositionTracker`
+2. ✅ Modified the `source_map.rs` file to use `NodeId` instead of raw pointers in the `build` method
+3. ✅ Updated the test helper in `automatic_position_tracking_test.rs` to use value equality instead of pointer equality
+4. ✅ Created the `position_tracking_bugs.md` file to document the issue and solution
+
+When attempting to compile the code, we encountered several compilation errors that highlight the extent of the changes needed:
+
+1. Feature flag issues: The methods need proper conditional compilation with `#[cfg(feature = "source_mapping")]`
+2. Type conversion issues: Converting between `usize` and `NodeId` requires explicit type handling
+3. Private field access: The `all_nodes` field in `PositionTracker` is private and needs accessor methods
+4. Method signature changes: The `build` method now requires a lookup function parameter
+
+### Remaining Implementation Tasks
+
+The following tasks still need to be completed to fully fix the issue:
+
+1. ⬜ Add proper accessor methods for the `all_nodes` field in `PositionTracker`
+2. ⬜ Update the `collect_position_spans` method to use `NodeId` instead of raw pointers
+3. ⬜ Implement the `lookup_node_id` function in `PositionTrackedLoader`
+4. ⬜ Fix type conversion between `usize` and `NodeId` throughout the codebase
+5. ⬜ Update method signatures for `ensure_node_has_span` and related functions
+6. ⬜ Fix the `u64.abs()` method calls (these are invalid since `u64` is already unsigned)
+7. ⬜ Add proper type annotations for HashMaps throughout the code
+8. ⬜ Test the changes with the full test suite to ensure they fix the segmentation fault
 
 This refactoring is substantial but necessary to resolve the segmentation fault. The transition from raw pointers to NodeId-based tracking will significantly improve code safety and reliability.
+
+### Key Insights from ROADMAP.md
+
+According to the project's ROADMAP.md, the team has already addressed some pointer equality issues in the past:
+
+1. They've enhanced the `PositionTracker` to store all nodes, not just anchored ones
+2. They've added an `all_nodes` map to ensure consistent node instances throughout parsing
+3. They've implemented content-based lookup methods like `find_node_id`
+
+However, the source map building process still uses raw pointers, which is causing the current segmentation fault. Our changes build on the existing work by completely eliminating the use of raw pointers in favor of a more robust NodeId-based approach.

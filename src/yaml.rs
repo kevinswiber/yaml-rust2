@@ -1241,9 +1241,7 @@ impl PositionTrackedLoader {
             Event::MappingStart(aid, _, _) => {
                 // Create a single hash instance that will be used consistently
                 let node = if aid > AnchorId::new(0) {
-                    if let Some(referenced_node) =
-                        self.position_tracker.borrow().get_anchor_yaml(aid)
-                    {
+                    if let Some(referenced_node) = self.position_tracker().get_anchor_yaml(aid) {
                         // If it's an alias reference, get the referenced node from position_tracker
                         referenced_node.clone()
                     } else {
@@ -1321,8 +1319,7 @@ impl PositionTrackedLoader {
             }
             Event::Alias(id) => {
                 // Track the alias event in the position tracker
-                self.position_tracker
-                    .borrow_mut()
+                self.position_tracker_mut()
                     .process_event(&Event::Alias(id), mark);
 
                 // Create the alias node as before
@@ -1345,17 +1342,50 @@ impl PositionTrackedLoader {
             // Use the original node to maintain identity
             self.doc_stack.push((original_node, node.1));
         } else {
+            // Get any anchor references we'll need before mutable borrowing occurs
+            let (alias_val, key_alias_val) = {
+                let node_alias_id = if let Yaml::Alias(id) = &original_node {
+                    Some(*id)
+                } else {
+                    None
+                };
+
+                // Check the last key in key_stack if it exists
+                let key_alias_id = if !self.key_stack.is_empty() {
+                    let key = self.key_stack.last().unwrap();
+                    if let Yaml::Alias(id) = key {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let tracker = self.position_tracker();
+
+                // Get the actual values for any aliases
+                let alias_val = match node_alias_id {
+                    Some(id) => tracker.get_anchor_yaml(id),
+                    None => None,
+                };
+
+                let key_alias_val = match key_alias_id {
+                    Some(id) => tracker.get_anchor_yaml(id),
+                    None => None,
+                };
+
+                (alias_val, key_alias_val)
+            };
+
             let parent = self.doc_stack.last_mut().unwrap();
             match *parent {
                 (Yaml::Array(ref mut v), _) => {
                     // Start with the original node to maintain identity
                     let mut newval = original_node.clone();
-                    if let Yaml::Alias(id) = newval {
-                        // Get from position_tracker
-                        let actual_val = self.position_tracker.borrow().get_anchor_yaml(id);
-
-                        // Check for self-referential alias
-                        if let Some(actual_val) = actual_val {
+                    if let Yaml::Alias(_) = newval {
+                        // Use the previously retrieved value
+                        if let Some(actual_val) = alias_val {
                             if let Yaml::Hash(ref h) = actual_val {
                                 if h.is_empty() {
                                     newval = Yaml::BadValue;
@@ -1383,13 +1413,9 @@ impl PositionTrackedLoader {
                         mem::swap(&mut newkey, cur_key);
                         // Check if the key is an alias
                         let mut actual_key = newkey;
-                        if let Yaml::Alias(id) = actual_key {
-                            // Get from position_tracker
-                            // Get referenced key before modifying hash
-                            // Get the referenced key before modifying the hash
-                            let referenced_key_opt =
-                                self.position_tracker.borrow().get_anchor_yaml(id);
-                            if let Some(referenced_key) = referenced_key_opt {
+                        if let Yaml::Alias(_) = actual_key {
+                            // Use the previously retrieved key
+                            if let Some(referenced_key) = key_alias_val {
                                 // Use the referenced key directly to maintain identity
                                 actual_key = referenced_key;
                             }
@@ -1397,15 +1423,9 @@ impl PositionTrackedLoader {
                         // Check if the value is an alias
                         // Start with the original node to maintain identity
                         let mut actual_val = original_node.clone();
-                        if let Yaml::Alias(id) = actual_val {
-                            // Get from position_tracker
-                            // Use the referenced value directly to maintain identity
-                            // Get the referenced value before modifying the document stack
-                            let referenced_val_opt =
-                                self.position_tracker.borrow().get_anchor_yaml(id);
-
-                            // Check for self-referential alias
-                            if let Some(referenced_val) = referenced_val_opt {
+                        if let Yaml::Alias(_) = actual_val {
+                            // Use the previously retrieved value
+                            if let Some(referenced_val) = alias_val {
                                 if let Yaml::Hash(ref h) = referenced_val {
                                     if h.is_empty() {
                                         actual_val = Yaml::BadValue;
@@ -1548,9 +1568,7 @@ impl PositionTrackedLoader {
         &self,
         anchor_id: AnchorId,
     ) -> Option<crate::position::PositionSpan> {
-        self.position_tracker
-            .borrow()
-            .get_anchor_position(anchor_id)
+        self.position_tracker().get_anchor_position(anchor_id)
     }
 
     /// Get the position of a node by its path
@@ -1568,9 +1586,7 @@ impl PositionTrackedLoader {
     /// The position span of the node, or None if not found
     #[must_use]
     pub fn get_node_position_by_path(&self, path: &str) -> Option<crate::position::PositionSpan> {
-        self.position_tracker
-            .borrow()
-            .get_node_position_by_path(path)
+        self.position_tracker().get_node_position_by_path(path)
     }
 
     /// Get the node associated with a specific anchor
@@ -1584,7 +1600,7 @@ impl PositionTrackedLoader {
     /// The YAML node associated with the anchor, or None if not found
     #[must_use]
     pub fn get_anchor_yaml(&self, anchor_id: AnchorId) -> Option<Yaml> {
-        self.position_tracker.borrow().get_anchor_yaml(anchor_id)
+        self.position_tracker().get_anchor_yaml(anchor_id)
     }
 
     /// Recursively collect position spans for all nodes in the document.
@@ -1732,7 +1748,7 @@ impl PositionTrackedLoader {
                 // Set the array's end position based on its last item
                 // For flow sequences, make sure to account for the closing bracket
                 // Check if this is likely a flow sequence by looking at the array's start position
-                let is_flow_sequence = self.position_tracker().is_flow_sequence(node_id);
+                let is_flow_sequence = self.position_tracker.borrow().is_flow_sequence(node_id);
 
                 let array_end_pos = if is_flow_sequence {
                     // For flow sequences, end is on the same line, just a few columns after the last item
@@ -1830,7 +1846,7 @@ impl PositionTrackedLoader {
 
                 // Set the hash's end position based on its last value
                 // Check if this is likely a flow mapping by looking at the hash's start position
-                let is_flow_mapping = self.position_tracker().is_flow_mapping(node_id);
+                let is_flow_mapping = self.position_tracker.borrow().is_flow_mapping(node_id);
 
                 let hash_end_pos = if is_flow_mapping {
                     // For flow mappings, end is on the same line, just a column after the last value
@@ -1919,7 +1935,7 @@ impl PositionTrackedLoader {
     /// * `document` - The document to enhance tracking for
     fn enhance_with_path_tracking(&self, document: &Yaml) {
         // Get a mutable reference to the position tracker through the RefCell
-        let mut position_tracker = self.position_tracker.borrow_mut();
+        let mut position_tracker = self.position_tracker_mut();
 
         // This implementation tracks nodes with their paths
         fn build_node_paths(
@@ -2133,7 +2149,7 @@ impl PositionTrackedLoader {
     }
 
     fn lookup_node_id(&self, node: &Yaml) -> Option<NodeId> {
-        match self.position_tracker.borrow() {
+        match self.position_tracker() {
             position_tracker => {
                 if let Some(id) = position_tracker.find_node_id(node) {
                     return Some(id);
@@ -2143,7 +2159,6 @@ impl PositionTrackedLoader {
                     return Some(id);
                 }
             }
-            _ => (),
         }
         None
     }
@@ -2152,7 +2167,7 @@ impl PositionTrackedLoader {
 impl MarkedEventReceiver for PositionTrackedLoader {
     fn on_event(&mut self, ev: Event, mark: Marker) {
         // First, update the position tracker
-        self.position_tracker.borrow_mut().process_event(&ev, mark);
+        self.position_tracker_mut().process_event(&ev, mark);
 
         if self.error.is_some() {
             return;
@@ -2192,27 +2207,22 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                 // For mappings, store the start position
                 if *anchor_id > AnchorId::new(0) {
                     // For anchored nodes, we track the anchor by ID
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .track_anchor(*anchor_id, span.start);
 
                     // Create an empty map for the anchor
                     let empty_map = Yaml::Hash(Hash::new());
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .store_anchor_node(*anchor_id, empty_map);
                 }
 
                 // Track the position of this mapping
-                let node_id = self
-                    .position_tracker
-                    .borrow_mut()
-                    .track_node_position(span.start);
+                let node_id = self.position_tracker_mut().track_node_position(span.start);
 
                 // Remember the node ID for later when we get the end event
                 if let Some(end_mark) = span.end {
                     // If we have an end position, update the node position directly with track_span_with_end
-                    let mut position_tracker = self.position_tracker.borrow_mut();
+                    let mut position_tracker = self.position_tracker_mut();
                     position_tracker.track_span_with_end(node_id, span.start, end_mark);
                 }
             }
@@ -2220,27 +2230,22 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                 // For sequences, store the start position
                 if *anchor_id > AnchorId::new(0) {
                     // For anchored nodes, we track the anchor by ID
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .track_anchor(*anchor_id, span.start);
 
                     // Create an empty array for the anchor
                     let empty_seq = Yaml::Array(Vec::new());
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .store_anchor_node(*anchor_id, empty_seq);
                 }
 
                 // Track the position of this sequence
-                let node_id = self
-                    .position_tracker
-                    .borrow_mut()
-                    .track_node_position(span.start);
+                let node_id = self.position_tracker_mut().track_node_position(span.start);
 
                 // Remember the node ID for later when we get the end event
                 if let Some(end_mark) = span.end {
                     // If we have an end position, update the node position directly with track_span_with_end
-                    let mut position_tracker = self.position_tracker.borrow_mut();
+                    let mut position_tracker = self.position_tracker_mut();
                     position_tracker.track_span_with_end(node_id, span.start, end_mark);
                 }
             }
@@ -2248,8 +2253,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                 // For scalars, store the position
                 if *anchor_id > AnchorId::new(0) {
                     // For anchored nodes, we track the anchor by ID
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .track_anchor(*anchor_id, span.start);
 
                     // Create the scalar node
@@ -2258,21 +2262,17 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                         _ => Yaml::String(value.clone()),
                     };
 
-                    self.position_tracker
-                        .borrow_mut()
+                    self.position_tracker_mut()
                         .store_anchor_node(*anchor_id, node);
                 }
 
                 // Track the position of this scalar
-                let node_id = self
-                    .position_tracker
-                    .borrow_mut()
-                    .track_node_position(span.start);
+                let node_id = self.position_tracker_mut().track_node_position(span.start);
 
                 // Remember the node ID for later when we get the end event
                 if let Some(end_mark) = span.end {
                     // If we have an end position, update the node position directly with track_span_with_end
-                    let mut position_tracker = self.position_tracker.borrow_mut();
+                    let mut position_tracker = self.position_tracker_mut();
                     position_tracker.track_span_with_end(node_id, span.start, end_mark);
                 }
             }
@@ -2368,7 +2368,7 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
             .iter()
             .filter(|(node_id, _)| {
                 // Check if the node is an array by using the position tracker's all_nodes map
-                if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
+                if let Some(node) = self.position_tracker().get_node(**node_id) {
                     matches!(node, Yaml::Array(_))
                 } else {
                     false
@@ -2380,13 +2380,13 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         // Print details of array nodes
         for (node_id, span) in node_spans.iter().filter(|(node_id, _)| {
             // Check if the node is an array by using the position tracker's all_nodes map
-            if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
+            if let Some(node) = self.position_tracker().get_node(**node_id) {
                 matches!(node, Yaml::Array(_))
             } else {
                 false
             }
         }) {
-            if let Some(node) = self.position_tracker.borrow().get_node(*node_id) {
+            if let Some(node) = self.position_tracker().get_node(*node_id) {
                 if let Yaml::Array(arr) = node {
                     eprintln!(
                         "Array node with {} items at line {} col {}, end marker: {:?}",
@@ -2407,13 +2407,13 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         eprintln!("*** End position report ***");
         for (node_id, span) in node_spans.iter().filter(|(node_id, _)| {
             // Check if the node is an array by using the position tracker's all_nodes map
-            if let Some(node) = self.position_tracker.borrow().get_node(**node_id) {
+            if let Some(node) = self.position_tracker().get_node(**node_id) {
                 matches!(node, Yaml::Array(_))
             } else {
                 false
             }
         }) {
-            if let Some(node) = self.position_tracker.borrow().get_node(*node_id) {
+            if let Some(node) = self.position_tracker().get_node(*node_id) {
                 if let Yaml::Array(arr) = node {
                     eprintln!(
                         "Array node with {} items at line {} col {}, end marker: {:?}",
@@ -2427,7 +2427,7 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         }
 
         // Get the position tracker for accessing node positions
-        let position_tracker = self.position_tracker.borrow();
+        let position_tracker = self.position_tracker();
 
         // Only set end positions based on actual data from the position tracker.
         // We will not estimate or guess positions, only use what we know from parsing.
@@ -2473,10 +2473,11 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         }
 
         // Build the source map using the collected spans
-        let mut source_map = builder.build(document, &node_spans);
+        let mut source_map =
+            builder.build(document, &node_spans, &|node| self.lookup_node_id(node));
 
         // Now add all nodes from the position tracker to ensure complete coverage
-        let position_tracker = self.position_tracker.borrow();
+        let position_tracker = self.position_tracker();
 
         // Add all nodes from the position tracker's node_path_map to the source map
         for (_, node_id, node) in position_tracker.get_nodes_by_path() {

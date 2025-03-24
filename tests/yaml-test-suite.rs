@@ -5,7 +5,7 @@ use libtest_mimic::{run_tests, Arguments, Outcome, Test};
 use yaml_rust2::{
     parser::{Event, EventReceiver, Parser, Tag},
     scanner::TScalarStyle,
-    yaml, ScanError, Yaml, YamlLoader,
+    yaml, AnchorId, ScanError, Yaml, YamlLoader,
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -179,8 +179,8 @@ impl EventReceiver for EventReporter {
     }
 }
 
-fn format_index(idx: usize) -> String {
-    if idx > 0 {
+fn format_index(idx: AnchorId) -> String {
+    if idx > AnchorId::new(0) {
         format!(" &{idx}")
     } else {
         String::new()

@@ -1,8 +1,11 @@
 #![cfg(feature = "source_mapping")]
 
 use yaml_rust2::{
-    parser::Parser, position::PositionSpan, scanner::Marker, source_map::SourceLocation,
-    source_map::SourceMapSupport, PositionTrackedLoader, Yaml,
+    parser::Parser,
+    position::PositionSpan,
+    scanner::Marker,
+    source_map::{SourceLocation, SourceMapSupport},
+    NodeId, PositionTrackedLoader, Yaml,
 };
 
 // Helper function to convert a node to a string representation
@@ -21,7 +24,7 @@ fn find_node_by_path<'a>(
     document: &'a Yaml,
     source_map: &yaml_rust2::source_map::SourceMap<Yaml>,
     path: &[&str],
-) -> Option<(yaml_rust2::source_map::NodeId, &'a Yaml)> {
+) -> Option<(NodeId, &'a Yaml)> {
     let mut current = document;
 
     // Navigate to the node at the specified path
@@ -418,7 +421,8 @@ mixed:
     );
     assert!(
         flow_mapping_loc.span.start.col() >= 0,
-        "Start column should be zero or positive"
+        "Flow mapping start column should be >= 0, got {}",
+        flow_mapping_loc.span.start.col()
     );
     // Fix missing end position if needed
     if flow_mapping_loc.span.end.is_none() {

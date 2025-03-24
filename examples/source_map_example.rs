@@ -24,7 +24,7 @@ use yaml_rust2::position::PositionSpan;
 use yaml_rust2::scanner::Marker;
 use yaml_rust2::source_map::{SourceMap, SourceMapBuilder, SourceMapSupport};
 use yaml_rust2::source_map_utils::YamlWithSourceMap;
-use yaml_rust2::{PositionTrackedLoader, Yaml};
+use yaml_rust2::{NodeId, PositionTrackedLoader, Yaml};
 
 // The example main function
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -697,10 +697,7 @@ fn find_node_at_path<'a>(doc: &'a Yaml, path: &[&str]) -> Option<&'a Yaml> {
 }
 
 // Helper function to find a node ID
-fn find_node_id(
-    source_map: &SourceMap<Yaml>,
-    node: &Yaml,
-) -> Option<yaml_rust2::source_map::NodeId> {
+fn find_node_id(source_map: &SourceMap<Yaml>, node: &Yaml) -> Option<NodeId> {
     for id in source_map.get_all_node_ids() {
         if let Some(map_node) = source_map.get_node(id) {
             if equal_yaml_content(map_node, node) {

@@ -5,8 +5,8 @@ use yaml_rust2::{
     parser::Parser,
     position::PositionSpan,
     scanner::Marker,
-    source_map::{NodeId, SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport},
-    PositionTrackedLoader, Yaml,
+    source_map::{SourceLocation, SourceMap, SourceMapBuilder, SourceMapSupport},
+    NodeId, PositionTrackedLoader, Yaml,
 };
 
 // Utility function to create a marker for testing
@@ -228,11 +228,11 @@ sequence_flow: [1, 2, { key: value }]
 
     // Define the expected key pairs for flow-style mappings in our test document
     let expected_key_pairs = [
-        ("key1", "key2"),       // Root level flow mapping
-        ("inner1", "inner2"),  // Nested flow mapping
+        ("key1", "key2"),     // Root level flow mapping
+        ("inner1", "inner2"), // Nested flow mapping
         ("a", "e"),           // Deep nested flow mapping
         ("c", "d"),           // Nested flow mapping inside the deep one
-        ("key", "key")        // Flow mapping inside the sequence
+        ("key", "key"),       // Flow mapping inside the sequence
     ];
 
     // Track which expected mappings we've found
@@ -244,40 +244,53 @@ sequence_flow: [1, 2, { key: value }]
         if let Some(location) = source_map.get_location(id) {
             let start_line = location.start_line();
             let start_col = location.start_column();
-            
+
             if let Some(node) = source_map.get_node(id) {
                 println!("Node ID: {:?}", id);
                 println!("Node Type: {:?}", node);
                 println!("Location: line {}, column {}", start_line, start_col);
-                
+
                 if let Some(end) = location.span.end {
                     println!("End: line {}, column {}", end.line(), end.col());
                 } else {
                     println!("End: None");
                 }
-                
+
                 // Check if this is a Hash node that could be one of our flow mappings
                 if let Yaml::Hash(ref hash) = node {
                     // Check against each of our expected key pairs
-                    for (i, (expected_key1, expected_key2)) in expected_key_pairs.iter().enumerate() {
+                    for (i, (expected_key1, expected_key2)) in expected_key_pairs.iter().enumerate()
+                    {
                         // Check if this hash contains the expected keys
                         let has_key1 = hash.contains_key(&Yaml::String(expected_key1.to_string()));
                         let has_key2 = hash.contains_key(&Yaml::String(expected_key2.to_string()));
-                        
+
                         if has_key1 && has_key2 {
-                            println!("Found expected flow-style mapping #{} with keys {} and {}!", 
-                                      i, expected_key1, expected_key2);
+                            println!(
+                                "Found expected flow-style mapping #{} with keys {} and {}!",
+                                i, expected_key1, expected_key2
+                            );
                             found_mappings[i] = true;
-                            
+
                             // Verify the position has an end marker and print it for debugging
                             if let Some(end) = location.span.end {
-                                println!("  Span: {}:{} to {}:{}", start_line, start_col, end.line(), end.col());
+                                println!(
+                                    "  Span: {}:{} to {}:{}",
+                                    start_line,
+                                    start_col,
+                                    end.line(),
+                                    end.col()
+                                );
                                 println!("  Expected this to be a flow-style mapping at the right position");
-                                
+
                                 // Note: We're not asserting the exact position yet since we suspect a bug
                                 // Just verify that the end position is after the start position
-                                if end.line() < start_line || (end.line() == start_line && end.col() <= start_col) {
-                                    println!("  WARNING: End position is not after start position!");
+                                if end.line() < start_line
+                                    || (end.line() == start_line && end.col() <= start_col)
+                                {
+                                    println!(
+                                        "  WARNING: End position is not after start position!"
+                                    );
                                 }
                             } else {
                                 println!("  WARNING: No end position for this mapping!");
@@ -285,7 +298,7 @@ sequence_flow: [1, 2, { key: value }]
                         }
                     }
                 }
-                
+
                 println!("--------------");
             }
         }
@@ -294,14 +307,20 @@ sequence_flow: [1, 2, { key: value }]
     // Verify that we found all the expected flow-style mappings
     for (i, found) in found_mappings.iter().enumerate() {
         let (key1, key2) = expected_key_pairs[i];
-        assert!(*found, "Did not find expected flow-style mapping with keys {} and {}", key1, key2);
+        assert!(
+            *found,
+            "Did not find expected flow-style mapping with keys {} and {}",
+            key1, key2
+        );
     }
-    
+
     // Print a summary of what we found
     println!("\n=== Flow-Style Mapping Test Summary ===");
-    println!("Found {} out of {} expected flow-style mappings", 
-             found_mappings.iter().filter(|&&found| found).count(),
-             expected_key_pairs.len());
+    println!(
+        "Found {} out of {} expected flow-style mappings",
+        found_mappings.iter().filter(|&&found| found).count(),
+        expected_key_pairs.len()
+    );
     println!("This test confirms that flow-style mappings are parsed correctly.");
     println!("However, their position information may not be accurate yet.");
 }

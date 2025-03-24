@@ -2,6 +2,7 @@ use yaml_rust2::parser::{Event, EventReceiver, MarkedEventReceiver, Parser};
 use yaml_rust2::position::{PositionSpan, PositionTracker};
 use yaml_rust2::scanner::Marker;
 use yaml_rust2::yaml::Yaml;
+use yaml_rust2::AnchorId;
 
 /// A test receiver that collects events with position spans
 struct PositionTestReceiver {
@@ -427,7 +428,7 @@ fn test_anchor_positions() {
     // Look for the anchor event (should be on first line)
     let events = receiver.get_events();
     let (event, span) = events.iter()
-        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, anchor_id, _) if s == "bar" && *anchor_id > 0))
+        .find(|(ev, _)| matches!(ev, Event::Scalar(s, _, anchor_id, _) if s == "bar" && *anchor_id > AnchorId::new(0)))
         .expect("Could not find anchor event");
 
     if let Event::Scalar(_, _, anchor_id, _) = event {
@@ -533,7 +534,7 @@ nested:
     // Find the sequence with anchor
     let (seq_event, seq_span) = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::SequenceStart(anchor_id, _) if *anchor_id > 0))
+        .find(|(ev, _)| matches!(ev, Event::SequenceStart(anchor_id, _) if *anchor_id > AnchorId::new(0)))
         .expect("Could not find sequence with anchor");
 
     if let Event::SequenceStart(seq_anchor_id, _) = seq_event {
@@ -606,7 +607,7 @@ nested:
     // Find the mapping with anchor
     let (map_event, map_span) = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::MappingStart(anchor_id, _, _) if *anchor_id > 0))
+        .find(|(ev, _)| matches!(ev, Event::MappingStart(anchor_id, _, _) if *anchor_id > AnchorId::new(0)))
         .expect("Could not find mapping with anchor");
 
     if let Event::MappingStart(map_anchor_id, _, _) = map_event {
@@ -715,13 +716,13 @@ fn test_position_tracker_with_loader() {
         }
 
         // Similar to YamlLoader::insert_new_node but uses position_tracker
-        fn insert_new_node(&mut self, node: (Yaml, usize)) {
+        fn insert_new_node(&mut self, node: (Yaml, AnchorId)) {
             // When we have an alias, use position_tracker to get the referenced node
             if let (Yaml::Alias(id), _) = node {
                 // Get the node from position_tracker instead of anchor_map
                 if let Some(yaml) = self.position_tracker.get_anchor_yaml(id) {
                     // Process the resolved node
-                    let actual_node = (yaml, 0);
+                    let actual_node = (yaml, AnchorId::new(0));
                     self.process_node(actual_node);
                     return;
                 }
@@ -732,7 +733,7 @@ fn test_position_tracker_with_loader() {
         }
 
         // Helper to process a node
-        fn process_node(&mut self, node: (Yaml, usize)) {
+        fn process_node(&mut self, node: (Yaml, AnchorId)) {
             // Simplified implementation for testing
             self.docs.push(node.0.clone());
         }
@@ -747,7 +748,7 @@ fn test_position_tracker_with_loader() {
             match ev {
                 yaml_rust2::parser::Event::Scalar(value, _style, anchor_id, _tag) => {
                     // Example: Create Yaml node and insert it
-                    let node = if anchor_id > 0 {
+                    let node = if anchor_id > AnchorId::new(0) {
                         // Node with anchor
                         Yaml::String(value.clone())
                     } else {
@@ -759,7 +760,7 @@ fn test_position_tracker_with_loader() {
                 }
                 yaml_rust2::parser::Event::Alias(anchor_id) => {
                     // For aliases, create a Yaml::Alias node
-                    self.insert_new_node((Yaml::Alias(anchor_id), 0));
+                    self.insert_new_node((Yaml::Alias(anchor_id), AnchorId::new(0)));
                 }
                 // Handle other events similarly
                 _ => {}
@@ -778,5 +779,8 @@ fn test_position_tracker_with_loader() {
     assert!(!loader.docs.is_empty());
 
     // Verify that position_tracker has captured anchor nodes
-    assert!(loader.position_tracker.get_anchor_yaml(1).is_some());
+    assert!(loader
+        .position_tracker
+        .get_anchor_yaml(AnchorId::new(1))
+        .is_some());
 }

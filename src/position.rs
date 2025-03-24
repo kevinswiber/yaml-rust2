@@ -359,20 +359,6 @@ impl PositionTracker {
         // This ensures that nodes can be found by multiple paths if needed
         self.node_path_map.insert(path.to_string(), node_id);
 
-        // Special handling for block_sequence node which is used in tests
-        if path == "block_sequence" {
-            // Make sure this node has a position
-            let span = PositionSpan {
-                start: position,
-                end: Some(position),
-            };
-            self.node_positions.insert(node_id, span);
-
-            // Also store it with a special key for tests to find
-            self.node_path_map
-                .insert("block_sequence".to_string(), node_id);
-        }
-
         node_id
     }
 
@@ -663,7 +649,6 @@ impl PositionTracker {
         self.node_positions.iter().map(|(&id, &pos)| (id, pos))
     }
 
-    #[cfg(feature = "source_mapping")]
     /// Determines if a node is a flow sequence based on characteristics
     /// Flow sequences are denoted by surrounding `[` and `]` characters
     ///
@@ -708,7 +693,6 @@ impl PositionTracker {
         false
     }
 
-    #[cfg(feature = "source_mapping")]
     /// Determines if a node is a flow mapping based on characteristics
     /// Flow mappings are denoted by surrounding `{` and `}` characters
     /// They can span multiple lines but typically maintain a more compact structure

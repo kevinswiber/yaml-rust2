@@ -9,7 +9,8 @@ use yaml_rust2::{
 #[cfg(feature = "source_mapping")]
 use yaml_rust2::{
     scanner::Marker,
-    source_map::{NodeId, SourceMap, SourceMapSupport},
+    source_map::{SourceMap, SourceMapSupport},
+    NodeId,
 };
 
 #[cfg(feature = "source_mapping")]
