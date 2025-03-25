@@ -154,7 +154,7 @@ fn test_flow_sequence_positions() {
     // Find the SequenceStart and SequenceEnd events
     let sequence_start = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::SequenceStart(_, _)))
+        .find(|(ev, _)| matches!(ev, Event::SequenceStart(_, _, _)))
         .unwrap();
 
     let sequence_end = events
@@ -254,7 +254,7 @@ fn test_nested_flow_positions() {
 
     let sequence_starts: Vec<_> = events
         .iter()
-        .filter(|(ev, _)| matches!(ev, Event::SequenceStart(_, _)))
+        .filter(|(ev, _)| matches!(ev, Event::SequenceStart(_, _, _)))
         .collect();
 
     // Find the SequenceEnd and MappingEnd events
@@ -534,10 +534,10 @@ nested:
     // Find the sequence with anchor
     let (seq_event, seq_span) = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::SequenceStart(anchor_id, _) if *anchor_id > AnchorId::new(0)))
+        .find(|(ev, _)| matches!(ev, Event::SequenceStart(anchor_id, _, _) if *anchor_id > AnchorId::new(0)))
         .expect("Could not find sequence with anchor");
 
-    if let Event::SequenceStart(seq_anchor_id, _) = seq_event {
+    if let Event::SequenceStart(seq_anchor_id, _, _) = seq_event {
         println!("Found sequence with anchor ID: {}", seq_anchor_id);
         assert_eq!(seq_span.start.line(), 2);
 

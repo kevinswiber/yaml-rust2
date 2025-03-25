@@ -213,6 +213,42 @@ impl PositionTracker {
 }
 ```
 
+## Implementation Progress
+
+### Phase 1: Initial Integration (In Progress)
+- [x] Added `TSequenceStyle` enum to represent sequence styles
+- [x] Updated `Event` enum to include style information in `SequenceStart`
+- [x] Fixed pattern matching in event handlers to accommodate style parameter
+- [ ] Update `MappingStart` event to include style information
+- [ ] Create `TMappingStyle` enum for mapping styles
+
+### Next Steps
+
+1. **Complete Event Updates**
+   - Update `EventReceiver` implementations to handle style information
+   - Ensure `Parser` correctly sets style information when generating events
+   - Update `EventReporter` in tests to display style information
+
+2. **Implement Style Storage**
+   - Add style tracking to `PositionTracker`
+   - Create a mapping from `NodeId` to style information
+   - Implement helper methods for style retrieval
+
+3. **Update Position Calculation**
+   - Modify position calculation logic to consider node styles
+   - Update end position tracking based on style-specific rules
+   - Handle nested style interactions correctly
+
+4. **Test Coverage**
+   - Add tests for style preservation
+   - Verify correct position tracking with different styles
+   - Test edge cases like empty collections and mixed styles
+
+5. **Documentation**
+   - Update API documentation to reflect style-aware methods
+   - Provide migration examples for downstream users
+   - Document breaking changes clearly
+
 ## Implementation Steps
 
 ### Phase 1: Remove Old System

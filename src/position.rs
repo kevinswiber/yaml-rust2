@@ -9,6 +9,7 @@ use crate::error::ScanError;
 use crate::parser::Event;
 use crate::parser::Tag;
 use crate::scanner::{Marker, TMappingStyle, TScalarStyle};
+use crate::style::TSequenceStyle;
 use crate::yaml::Yaml;
 
 /// A unique identifier for a YAML node in the document.
@@ -164,6 +165,16 @@ pub struct PositionTracker {
     current_key: Option<String>,
     /// Map of node ID to node instance - stores ALL nodes for consistent identity
     all_nodes: std::collections::HashMap<NodeId, Yaml>,
+    /// Map of node ID to style information
+    node_styles: std::collections::HashMap<NodeId, NodeStyle>,
+}
+
+/// Enum to represent the style of a node
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeStyle {
+    Scalar(TScalarStyle),
+    Sequence(TSequenceStyle),
+    Mapping(TMappingStyle),
 }
 
 impl PositionTracker {
@@ -182,6 +193,7 @@ impl PositionTracker {
             path_stack: Vec::new(),
             current_key: None,
             all_nodes: std::collections::HashMap::new(),
+            node_styles: std::collections::HashMap::new(),
         }
     }
 
@@ -1088,14 +1100,9 @@ impl PositionTracker {
 
         match ev {
             Event::MappingStart(anchor_id, _, style) => {
-                // For all mappings (both flow and block style), push the start position to the stack
-                // Use different IDs for flow (0) and block (2) mappings
-                let mapping_id = if *style == TMappingStyle::Flow {
-                    NodeId::new(0)
-                } else {
-                    NodeId::new(2)
-                };
-                self.push(mapping_id, mark);
+                let node_id = self.next_node_id();
+                self.store_mapping_style(node_id, *style);
+                self.push(node_id, mark);
 
                 // If this is also an anchor, track it
                 if *anchor_id > AnchorId::new(0) {
@@ -1244,13 +1251,10 @@ impl PositionTracker {
                     span
                 }
             }
-            Event::SequenceStart(anchor_id, _tag) => {
-                // For sequences, push the start position to the stack
-                // Use different IDs for flow (1) and block (3) sequences
-                // For now, we'll use ID 1 for all sequences since we don't have a reliable way to detect flow sequences
-                // In the future, we might need to enhance the Event enum to include style information for sequences
-                let sequence_id = NodeId::new(1);
-                self.push(sequence_id, mark);
+            Event::SequenceStart(anchor_id, _tag, style) => {
+                let node_id = self.next_node_id();
+                self.store_sequence_style(node_id, *style);
+                self.push(node_id, mark);
 
                 // If this is also an anchor, track it
                 if *anchor_id > AnchorId::new(0) {
@@ -1296,71 +1300,59 @@ impl PositionTracker {
                 span
             }
             Event::SequenceEnd => {
-                // If the item on top of the stack is a sequence (id 1 for flow or 3 for block),
+                // If the item on top of the stack is a sequence,
                 // return a span from its start position to the current position
                 if let Some((id, start_mark)) = self.pop() {
-                    if id == NodeId::new(1) || id == NodeId::new(3) {
-                        // Create a complete span with start and end positions
-                        let complete_span = PositionSpan::with_end(start_mark, mark);
+                    let end_mark = self.calculate_end_position(id, mark);
+                    let complete_span = PositionSpan::with_end(start_mark, end_mark);
+                    let mut nodes_to_update = Vec::new();
 
-                        // For flow sequences (id 1), we need special handling for end positions
-                        if id == NodeId::new(1) {
-                            // Flow sequence ID is 1
-                            // Find array nodes in all_nodes and collect them before updating
-                            let span_with_end = PositionSpan::with_end(start_mark, mark);
-                            let mut nodes_to_update = Vec::new();
+                    // First collect all array nodes from all_nodes
+                    for (node_id, node) in &self.all_nodes {
+                        // Check if this is an array node
+                        if let Yaml::Array(_) = node {
+                            // Save this node ID for updating later
+                            nodes_to_update.push(*node_id);
+                        }
+                    }
 
-                            // First collect all array nodes from all_nodes
-                            for (node_id, node) in &self.all_nodes {
-                                // Check if this is an array node
+                    // Then collect array nodes from the path map
+                    for (_, node_id) in self.node_path_map.iter() {
+                        // Check if we've already collected this node ID
+                        if !nodes_to_update.contains(node_id) {
+                            // Fetch the node to check if it's an array
+                            if let Some(node) = self.all_nodes.get(node_id) {
                                 if let Yaml::Array(_) = node {
-                                    // Save this node ID for updating later
+                                    // Add to our collection
                                     nodes_to_update.push(*node_id);
                                 }
                             }
+                        }
+                    }
 
-                            // Then collect array nodes from the path map
-                            for (_, node_id) in self.node_path_map.iter() {
-                                // Check if we've already collected this node ID
-                                if !nodes_to_update.contains(node_id) {
-                                    // Fetch the node to check if it's an array
-                                    if let Some(node) = self.all_nodes.get(node_id) {
-                                        if let Yaml::Array(_) = node {
-                                            // Add to our collection
-                                            nodes_to_update.push(*node_id);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Now update all collected nodes with their end positions
-                            for node_id in nodes_to_update {
-                                // Only update if this node has a matching span
-                                if let Some(pos) = self.node_positions.get_mut(&node_id) {
-                                    if pos.end.is_none() {
-                                        // Instead of directly setting the end position,
-                                        // use track_span_with_end to ensure all paths are updated
-                                        let start_mark = pos.start;
-                                        self.track_span_with_end(node_id, start_mark, mark);
-                                        println!(
-                                            "Updated end position for array node {} to ({},{})",
-                                            node_id,
-                                            mark.line(),
-                                            mark.col()
-                                        );
-                                    }
-                                }
+                    // Now update all collected nodes with their end positions
+                    for node_id in nodes_to_update {
+                        // Only update if this node has a matching span
+                        if let Some(pos) = self.node_positions.get_mut(&node_id) {
+                            if pos.end.is_none() {
+                                // Instead of directly setting the end position,
+                                // use track_span_with_end to ensure all paths are updated
+                                let start_mark = pos.start;
+                                self.track_span_with_end(node_id, start_mark, mark);
+                                println!(
+                                    "Updated end position for array node {} to ({},{})",
+                                    node_id,
+                                    mark.line(),
+                                    mark.col()
+                                );
                             }
                         }
-
-                        // Pop the path component as we're exiting the sequence
-                        self.pop_path();
-
-                        complete_span
-                    } else {
-                        // This shouldn't happen, but just in case
-                        span
                     }
+
+                    // Pop the path component as we're exiting the sequence
+                    self.pop_path();
+
+                    complete_span
                 } else {
                     // Otherwise, just return the current position
                     span
@@ -1488,6 +1480,11 @@ impl PositionTracker {
         None
     }
 
+    pub fn next_node_id(&mut self) -> NodeId {
+        self.next_node_id = NodeId::new(self.next_node_id.value() + 1);
+        self.next_node_id
+    }
+
     /// Track a node by its path in the YAML document
     ///
     /// This method stores the position of a node identified by its path,
@@ -1604,6 +1601,122 @@ impl PositionTracker {
                     }
                 }
             }
+        }
+    }
+
+    /// Store the style of a node
+    ///
+    /// This method stores the style information for a node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    /// * `style` - The style of the node
+    pub fn store_node_style(&mut self, node_id: NodeId, style: NodeStyle) {
+        self.node_styles.insert(node_id, style);
+    }
+
+    /// Get the style of a node
+    ///
+    /// This method retrieves the style information for a node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    ///
+    /// # Returns
+    ///
+    /// The style of the node, if available
+    #[must_use]
+    pub fn get_node_style(&self, node_id: NodeId) -> Option<NodeStyle> {
+        self.node_styles.get(&node_id).copied()
+    }
+
+    /// Store the style of a sequence node
+    ///
+    /// This method stores the style information for a sequence node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    /// * `style` - The style of the sequence
+    pub fn store_sequence_style(&mut self, node_id: NodeId, style: TSequenceStyle) {
+        self.node_styles.insert(node_id, NodeStyle::Sequence(style));
+    }
+
+    /// Store the style of a mapping node
+    ///
+    /// This method stores the style information for a mapping node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    /// * `style` - The style of the mapping
+    pub fn store_mapping_style(&mut self, node_id: NodeId, style: TMappingStyle) {
+        self.node_styles.insert(node_id, NodeStyle::Mapping(style));
+    }
+
+    /// Get the style of a sequence node
+    ///
+    /// This method retrieves the style information for a sequence node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    ///
+    /// # Returns
+    ///
+    /// The style of the sequence, if available
+    #[must_use]
+    pub fn get_sequence_style(&self, node_id: NodeId) -> Option<TSequenceStyle> {
+        match self.node_styles.get(&node_id) {
+            Some(NodeStyle::Sequence(style)) => Some(*style),
+            _ => None,
+        }
+    }
+
+    /// Get the style of a mapping node
+    ///
+    /// This method retrieves the style information for a mapping node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the node
+    ///
+    /// # Returns
+    ///
+    /// The style of the mapping, if available
+    #[must_use]
+    pub fn get_mapping_style(&self, node_id: NodeId) -> Option<TMappingStyle> {
+        match self.node_styles.get(&node_id) {
+            Some(NodeStyle::Mapping(style)) => Some(*style),
+            _ => None,
+        }
+    }
+
+    fn calculate_end_position(&self, node_id: NodeId, mark: Marker) -> Marker {
+        // Use style information to determine end position
+        if let Some(style) = self.node_styles.get(&node_id) {
+            match style {
+                NodeStyle::Sequence(TSequenceStyle::Flow)
+                | NodeStyle::Mapping(TMappingStyle::Flow) => {
+                    // For flow style, use the closing bracket/brace position
+                    mark
+                }
+                _ => {
+                    // For block style, use the end of the last entry
+                    if let Some(last_pos) = self.position_stack.last().map(|entry| entry.1) {
+                        // Default to the last position on the stack if available
+                        last_pos
+                    } else {
+                        // Fallback to the provided mark
+                        mark
+                    }
+                }
+            }
+        } else {
+            // Default behavior if style is not available
+            mark
         }
     }
 }

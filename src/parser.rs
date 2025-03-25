@@ -7,6 +7,7 @@
 use crate::{
     error::ScanError,
     scanner::{Marker, Scanner, TMappingStyle, TScalarStyle, Token, TokenType},
+    style::TSequenceStyle,
     AnchorId, NodeId,
 };
 use std::collections::HashMap;
@@ -42,8 +43,8 @@ pub enum Event {
     /// Parameters:
     /// - anchor_id: usize
     /// - tag: Option<Tag>
-    /// - style: Option<TSequenceStyle> - Added to distinguish between flow and block sequences
-    SequenceStart(AnchorId, Option<Tag>),
+    /// - style: TSequenceStyle - Style information for the sequence
+    SequenceStart(AnchorId, Option<Tag>, TSequenceStyle),
     /// The end of a sequence
     SequenceEnd,
     /// The start of a mapping with style information
@@ -890,7 +891,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) if indentless_sequence => {
                 self.state = State::IndentlessSequenceEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor_id, tag, TSequenceStyle::Block),
+                    mark,
+                ))
             }
             Token(_, TokenType::Scalar(..)) => {
                 self.pop_state();
@@ -902,7 +906,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Token(mark, TokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor_id, tag, TSequenceStyle::Flow),
+                    mark,
+                ))
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
@@ -913,7 +920,10 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor_id, tag, TSequenceStyle::Block),
+                    mark,
+                ))
             }
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
@@ -1317,7 +1327,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
 
             // Sequence events
-            Event::SequenceStart(anchor_id, _) => {
+            Event::SequenceStart(anchor_id, _tag, _style) => {
                 // Create a position span for the sequence start
                 let span = crate::position::PositionSpan::new(mark);
 

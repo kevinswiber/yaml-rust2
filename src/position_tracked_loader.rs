@@ -7,6 +7,7 @@ use crate::error::ScanError;
 use crate::parser::{Event, MarkedEventReceiver, Parser, Tag};
 use crate::position::PositionTracker;
 use crate::scanner::{Marker, TScalarStyle};
+use crate::style::TSequenceStyle;
 use crate::yaml::{parse_f64, Hash, Yaml};
 use crate::{AnchorId, NodeId};
 
@@ -119,7 +120,7 @@ impl PositionTrackedLoader {
                     _ => unreachable!(),
                 }
             }
-            Event::SequenceStart(aid, _) => {
+            Event::SequenceStart(aid, _tag, _style) => {
                 // Create a single array instance that will be used consistently
                 let node = Yaml::Array(Vec::new());
 
@@ -645,26 +646,36 @@ impl PositionTrackedLoader {
                 }
 
                 // Set the array's end position based on its last item
-                // For flow sequences, make sure to account for the closing bracket
-                // Check if this is likely a flow sequence by looking at the array's start position
-                let is_flow_sequence = self.position_tracker.borrow().is_flow_sequence(node_id);
-
-                let array_end_pos = if is_flow_sequence {
-                    // For flow sequences, end is on the same line, just a few columns after the last item
-                    crate::scanner::Marker::new(
-                        0,
-                        last_end_pos.line(),
-                        last_end_pos.col() + 1, // +1 for closing bracket
-                    )
+                // Use the position tracker to determine the style
+                let array_end_pos = if let Some(style) =
+                    self.position_tracker.borrow().get_sequence_style(node_id)
+                {
+                    match style {
+                        TSequenceStyle::Flow => {
+                            // For flow sequences, end is on the same line, just a few columns after the last item
+                            crate::scanner::Marker::new(
+                                0,
+                                last_end_pos.line(),
+                                last_end_pos.col() + 1, // +1 for closing bracket
+                            )
+                        }
+                        TSequenceStyle::Block => {
+                            // For block sequences, end is typically on a new line with the same indentation
+                            crate::scanner::Marker::new(
+                                0,
+                                last_end_pos.line() + 1,
+                                current_span.start.col(),
+                            )
+                        }
+                    }
                 } else {
-                    // For block sequences, end is typically on a new line with the same indentation
+                    // Default behavior if style is not available
                     crate::scanner::Marker::new(
                         0,
                         last_end_pos.line() + 1,
                         current_span.start.col(),
                     )
                 };
-
                 ensure_node_has_end_pos(node_id, spans, array_end_pos);
             }
             Yaml::Hash(hash) => {
@@ -1079,7 +1090,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
     fn on_positioned_event(&mut self, ev: Event, span: crate::position::PositionSpan) {
         // Debug output to see what events and spans we're receiving
         match &ev {
-            Event::SequenceStart(_, _) => {
+            Event::SequenceStart(_anchor_id, _tag, _style) => {
                 eprintln!(
                     ">>> SequenceStart received with span: ({},{}) to ({},{})",
                     span.start.line(),
@@ -1125,7 +1136,7 @@ impl MarkedEventReceiver for PositionTrackedLoader {
                     position_tracker.track_span_with_end(node_id, span.start, end_mark);
                 }
             }
-            Event::SequenceStart(anchor_id, _) => {
+            Event::SequenceStart(anchor_id, _tag, _style) => {
                 // For sequences, store the start position
                 if *anchor_id > AnchorId::new(0) {
                     // For anchored nodes, we track the anchor by ID

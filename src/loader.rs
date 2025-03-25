@@ -36,6 +36,8 @@
 use std::collections::BTreeMap;
 use std::mem;
 
+use hashlink::LinkedHashMap;
+
 use crate::error::ScanError;
 use crate::parser::{Event, MarkedEventReceiver, Parser, Tag};
 use crate::position::PositionTracker;
@@ -119,11 +121,11 @@ impl YamlLoader {
                     _ => unreachable!(),
                 }
             }
-            Event::SequenceStart(aid, _) => {
+            Event::SequenceStart(aid, tag, style) => {
                 // Track the sequence start in the position tracker
                 let _span = self
                     .position_tracker
-                    .process_event(&Event::SequenceStart(aid, None), mark);
+                    .process_event(&Event::SequenceStart(aid, tag, style), mark);
 
                 self.doc_stack.push((Yaml::Array(Vec::new()), aid));
 
@@ -142,11 +144,11 @@ impl YamlLoader {
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node, mark)?;
             }
-            Event::MappingStart(aid, _, _) => {
+            Event::MappingStart(aid, tag, style) => {
                 // Track the mapping start in the position tracker
                 let _span = self
                     .position_tracker
-                    .process_event(&Event::MappingStart(aid, None, TMappingStyle::Flow), mark);
+                    .process_event(&Event::MappingStart(aid, tag, style), mark);
 
                 let node = if aid > AnchorId::new(0) {
                     if let Some(referenced_node) = self.position_tracker.get_anchor_yaml(aid) {
@@ -167,10 +169,13 @@ impl YamlLoader {
                 self.key_stack.push(Yaml::BadValue);
 
                 if aid > AnchorId::new(0) {
+                    let empty_hash = Yaml::Hash(LinkedHashMap::new());
                     self.position_tracker.track_anchor(aid, mark);
-                    self.position_tracker
-                        .store_anchor_node(aid, Yaml::Hash(Hash::new()));
+                    self.position_tracker.store_anchor_node(aid, empty_hash);
                 }
+
+                // Store the style information
+                // self.position_tracker.store_mapping_style(aid, style);
             }
             Event::MappingEnd => {
                 // Track the mapping end in the position tracker

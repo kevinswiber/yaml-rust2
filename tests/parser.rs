@@ -1,6 +1,7 @@
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
 use yaml_rust2::position::PositionSpan;
 use yaml_rust2::scanner::{Marker, TMappingStyle};
+use yaml_rust2::style::TSequenceStyle;
 use yaml_rust2::ScanError;
 
 // Custom test loader to capture events and their positions
@@ -37,7 +38,7 @@ impl TestLoader {
             }
             // For sequence start events, push to the stack
             // Note: SequenceStart doesn't have a style parameter, so we'll treat all as flow for testing
-            Event::SequenceStart(_, _) => {
+            Event::SequenceStart(_anchor_id, _tag, _style) => {
                 self.flow_collection_stack.push((ev.clone(), mark));
                 let span = PositionSpan {
                     start: mark,
@@ -74,7 +75,7 @@ impl TestLoader {
             // For flow sequence end events, pop from the stack
             Event::SequenceEnd => {
                 if let Some((start_event, start_mark)) = self.flow_collection_stack.pop() {
-                    if let Event::SequenceStart(_, _) = start_event {
+                    if let Event::SequenceStart(_anchor_id, _tag, _style) = start_event {
                         let span = PositionSpan {
                             start: start_mark,
                             end: Some(mark), // Set the end position
@@ -177,7 +178,7 @@ fn test_flow_collection_position_spans() {
                 event,
                 Event::MappingStart(_, _, TMappingStyle::Flow)
                     | Event::MappingEnd
-                    | Event::SequenceStart(_, _)
+                    | Event::SequenceStart(_, _, TSequenceStyle::Flow)
                     | Event::SequenceEnd
             )
         })
@@ -209,7 +210,7 @@ fn test_flow_collection_position_spans() {
     // Check the SequenceStart position
     let sequence_start = mapping_events[2];
     match sequence_start.0 {
-        Event::SequenceStart(_, _) => {
+        Event::SequenceStart(_, _, TSequenceStyle::Flow) => {
             assert_eq!(sequence_start.1.start.line(), 1);
             assert_eq!(sequence_start.1.start.col(), 33);
         }

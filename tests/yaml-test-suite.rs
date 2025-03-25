@@ -146,7 +146,7 @@ impl EventReceiver for EventReporter {
             Event::DocumentStart => "+DOC".into(),
             Event::DocumentEnd => "-DOC".into(),
 
-            Event::SequenceStart(idx, tag) => {
+            Event::SequenceStart(idx, tag, _style) => {
                 format!("+SEQ{}{}", format_index(idx), format_tag(&tag))
             }
             Event::SequenceEnd => "-SEQ".into(),

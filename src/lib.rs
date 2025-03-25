@@ -109,6 +109,7 @@ pub mod scanner;
 pub mod source_map;
 #[cfg(feature = "source_mapping")]
 pub mod source_map_utils;
+pub mod style;
 pub mod yaml;
 
 // reexport key APIs
