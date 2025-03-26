@@ -713,7 +713,12 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 self.parser_process_directives()?;
                 self.push_state(State::DocumentEnd);
                 self.state = State::BlockNode;
-                Ok((Event::DocumentStart, mark))
+                
+                // For implicit documents, create a document start mark at column 0
+                // to ensure consistent positioning with explicit documents
+                let doc_start_mark = Marker::new(mark.index(), mark.line(), 0);
+                
+                Ok((Event::DocumentStart, doc_start_mark))
             }
             _ => {
                 // explicit document
