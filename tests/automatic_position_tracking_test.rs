@@ -1,12 +1,29 @@
 #![cfg(feature = "source_mapping")]
 
 use yaml_rust2::{
-    parser::Parser,
+    parser::{Event, MarkedEventReceiver, Parser},
     position::PositionSpan,
     scanner::Marker,
     source_map::{SourceLocation, SourceMapSupport},
     NodeId, PositionTrackedLoader, Yaml,
 };
+
+// A simple event receiver for testing
+struct TestEventReceiver {
+    events: Vec<(Event, Marker)>,
+}
+
+impl TestEventReceiver {
+    fn new() -> Self {
+        TestEventReceiver { events: Vec::new() }
+    }
+}
+
+impl MarkedEventReceiver for TestEventReceiver {
+    fn on_event(&mut self, ev: Event, mark: Marker) {
+        self.events.push((ev, mark));
+    }
+}
 
 // Helper function to convert a node to a string representation
 fn node_to_string(node: &Yaml) -> Option<String> {
@@ -403,6 +420,63 @@ mixed:
         flow_mapping_loc.span.start.col()
     );
 
+    // Print all node paths and their positions for debugging
+    println!("\n*** All node paths and positions ***");
+    let position_tracker = loader.position_tracker();
+    for (path, node_id) in position_tracker.get_path_mappings() {
+        if let Some(pos) = position_tracker.get_node_position(node_id) {
+            println!(
+                "Path: {}, Position: ({},{})",
+                path,
+                pos.start.line(),
+                pos.start.col()
+            );
+
+            // If this is the flow_mapping node, print more details
+            if path == "flow_mapping" {
+                println!("Found flow_mapping node with ID: {:?}", node_id);
+                println!("Position: ({},{})", pos.start.line(), pos.start.col());
+
+                // Check if there's a node with this ID in the all_nodes map
+                if let Some(node) = position_tracker.get_node(node_id) {
+                    println!("Node content: {:?}", node);
+                } else {
+                    println!("No node found with this ID in all_nodes map");
+                }
+            }
+        }
+    }
+
+    // Print the raw events from the scanner
+    println!("\n*** Scanner events ***");
+    let mut test_receiver = TestEventReceiver::new();
+    let mut parser = yaml_rust2::parser::Parser::new(yaml_str.chars());
+    parser.load(&mut test_receiver, true).unwrap();
+
+    for (i, (event, mark)) in test_receiver.events.iter().enumerate() {
+        println!(
+            "{}: {:?} at line {}, col {}",
+            i,
+            event,
+            mark.line(),
+            mark.col()
+        );
+    }
+
+    // Print all node paths and their positions for debugging
+    println!("\n*** All node paths and positions ***");
+    let position_tracker = loader.position_tracker();
+    for (path, node_id) in position_tracker.get_path_mappings() {
+        if let Some(pos) = position_tracker.get_node_position(node_id) {
+            println!(
+                "Path: {}, Position: ({},{})",
+                path,
+                pos.start.line(),
+                pos.start.col()
+            );
+        }
+    }
+
     // Try to find the node at its position
     let found_flow_mapping = source_map.find_node_at_position(
         flow_mapping_loc.span.start.line(),
@@ -447,6 +521,32 @@ mixed:
             flow_mapping_loc.span.end.is_some(),
             "End position should exist for flow mapping"
         );
+    }
+
+    // Print the raw events from the scanner
+    println!("\n*** Scanner events ***");
+    let mut test_receiver = TestEventReceiver::new();
+    let mut parser = yaml_rust2::parser::Parser::new(yaml_str.chars());
+    parser.load(&mut test_receiver, true).unwrap();
+
+    for (i, (event, mark)) in test_receiver.events.iter().enumerate() {
+        println!(
+            "{}: {:?} at line {}, col {}",
+            i,
+            event,
+            mark.line(),
+            mark.col()
+        );
+
+        // If this is the MappingStart event for flow_mapping, print more details
+        if i == 4 {
+            // The flow mapping start event
+            println!(
+                "Flow mapping start event at line {}, col {}",
+                mark.line(),
+                mark.col()
+            );
+        }
     }
 
     // flow_mapping should start at line 3
@@ -646,7 +746,7 @@ config: &default_config
     host: localhost
     port: &db_port 5432
     credentials: {username: admin, password: secret}
-  
+
   logging:
     level: info
     format: &log_fmt json
@@ -657,7 +757,7 @@ environments:
     <<: *default_config
     database:
       port: 3306
-  
+
   production:
     <<: *default_config
     logging:

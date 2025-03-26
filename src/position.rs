@@ -1184,54 +1184,98 @@ impl PositionTracker {
                     // Create a complete span with start and end positions
                     let complete_span = PositionSpan::with_end(start_mark, end_mark);
 
-                    // Find any nodes that were created with just the start position
-                    // and update them with the complete span
-                    for (node_id, position) in self.node_positions.iter_mut() {
-                        // Check if this position has the same start mark and no end mark
-                        if position.start == start_mark && position.end.is_none() {
-                            // Update the position with the end mark
-                            position.end = Some(mark);
-                        }
+                    // // Find any nodes that were created with just the start position
+                    // // and update them with the complete span
+                    // for (node_id, position) in self.node_positions.iter_mut() {
+                    //     // Check if this position has the same start mark and no end mark
+                    //     if position.start == start_mark && position.end.is_none() {
+                    //         // Update the position with the end mark
+                    //         position.end = Some(mark);
+                    //     }
 
-                        // Also update any nodes that might be referenced by path
-                        let path = format!("mapping_{}", node_id);
-                        if self.node_path_map.contains_key(&path) {
-                            // This is a mapping node that we need to update
-                            position.end = Some(mark);
+                    //     // Also update any nodes that might be referenced by path
+                    //     let path = format!("mapping_{}", node_id);
+                    //     if self.node_path_map.contains_key(&path) {
+                    //         // This is a mapping node that we need to update
+                    //         position.end = Some(mark);
+                    //     }
+                    // }
+
+                    // // Update end positions for all flow mappings
+                    // // This ensures that all flow mappings have proper end positions regardless of their path
+                    // for (_node_id, pos) in self.node_positions.iter_mut() {
+                    //     // If this node has no end position yet, update it with the current end position
+                    //     // This is a more aggressive approach that ensures all nodes get end positions
+                    //     if pos.end.is_none() {
+                    //         // For flow mappings, we want to ensure they all have end positions
+                    //         // Since we don't have direct type information, we'll set end positions
+                    //         // for all nodes that don't have them yet
+                    //         pos.end = Some(mark);
+                    //     }
+                    // }
+
+                    // // Special handling for root flow mapping
+                    // // Ensure that any node with a path containing "root_flow" has an end position
+                    // for (path, node_id) in self.node_path_map.iter() {
+                    //     if path.contains("root_flow") {
+                    //         if let Some(pos) = self.node_positions.get_mut(node_id) {
+                    //             // Always set the end position for root flow mappings
+                    //             pos.end = Some(mark);
+                    //         }
+                    //     }
+                    // }
+
+                    // // Also update any nodes that are referenced by path
+                    // let path_map_copy = self.node_path_map.clone();
+                    // for (_, node_id) in path_map_copy {
+                    //     if let Some(pos) = self.node_positions.get_mut(&node_id) {
+                    //         // If this node has no end position, set it
+                    //         if pos.end.is_none() {
+                    //             pos.end = Some(mark);
+                    //         }
+                    //     }
+                    // }
+
+                    let mut nodes_to_update = Vec::new();
+
+                    // First collect all array nodes from all_nodes
+                    for (node_id, node) in &self.all_nodes {
+                        // Check if this is an array node
+                        if let Yaml::Hash(_) = node {
+                            // Save this node ID for updating later
+                            nodes_to_update.push(*node_id);
                         }
                     }
 
-                    // Update end positions for all flow mappings
-                    // This ensures that all flow mappings have proper end positions regardless of their path
-                    for (_node_id, pos) in self.node_positions.iter_mut() {
-                        // If this node has no end position yet, update it with the current end position
-                        // This is a more aggressive approach that ensures all nodes get end positions
-                        if pos.end.is_none() {
-                            // For flow mappings, we want to ensure they all have end positions
-                            // Since we don't have direct type information, we'll set end positions
-                            // for all nodes that don't have them yet
-                            pos.end = Some(mark);
-                        }
-                    }
-
-                    // Special handling for root flow mapping
-                    // Ensure that any node with a path containing "root_flow" has an end position
-                    for (path, node_id) in self.node_path_map.iter() {
-                        if path.contains("root_flow") {
-                            if let Some(pos) = self.node_positions.get_mut(node_id) {
-                                // Always set the end position for root flow mappings
-                                pos.end = Some(mark);
+                    // Then collect array nodes from the path map
+                    for (_, node_id) in self.node_path_map.iter() {
+                        // Check if we've already collected this node ID
+                        if !nodes_to_update.contains(node_id) {
+                            // Fetch the node to check if it's an array
+                            if let Some(node) = self.all_nodes.get(node_id) {
+                                if let Yaml::Hash(_) = node {
+                                    // Add to our collection
+                                    nodes_to_update.push(*node_id);
+                                }
                             }
                         }
                     }
 
-                    // Also update any nodes that are referenced by path
-                    let path_map_copy = self.node_path_map.clone();
-                    for (_, node_id) in path_map_copy {
+                    // Now update all collected nodes with their end positions
+                    for node_id in nodes_to_update {
+                        // Only update if this node has a matching span
                         if let Some(pos) = self.node_positions.get_mut(&node_id) {
-                            // If this node has no end position, set it
                             if pos.end.is_none() {
-                                pos.end = Some(mark);
+                                // Instead of directly setting the end position,
+                                // use track_span_with_end to ensure all paths are updated
+                                let start_mark = pos.start;
+                                self.track_span_with_end(node_id, start_mark, mark);
+                                println!(
+                                    "Updated end position for hash node {} to ({},{})",
+                                    node_id,
+                                    mark.line(),
+                                    mark.col()
+                                );
                             }
                         }
                     }

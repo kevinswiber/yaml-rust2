@@ -1024,30 +1024,48 @@ impl PositionTrackedLoader {
                     // Track the key by its exact name
                     position_tracker.track_node_by_path(key_str, key, key_position);
 
-                    // Also track the value with the key's name
-                    let value_position =
-                        if let Some(value_id) = position_tracker.find_node_id(value) {
-                            if let Some(span) = position_tracker.get_node_position(value_id) {
-                                span.start
+                    // For flow mappings, try to find the mapping_{node_id} path first
+                    let mut found_mapping_position = None;
+                    if let Yaml::Hash(_) = value {
+                        // Look for a mapping_{node_id} path that corresponds to this value
+                        for (path, node_id) in position_tracker.get_path_mappings() {
+                            if path.starts_with("mapping_") {
+                                if let Some(node) = position_tracker.get_node(node_id) {
+                                    if std::ptr::eq(node as *const Yaml, value as *const Yaml) {
+                                        // Found the mapping node, use its position
+                                        if let Some(span) =
+                                            position_tracker.get_node_position(node_id)
+                                        {
+                                            // Found the correct position, use it
+                                            found_mapping_position = Some(span.start);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // If we found a mapping position, use it
+                    if let Some(mapping_position) = found_mapping_position {
+                        // Use this position instead of the key position
+                        position_tracker.track_node_by_path(key_str, value, mapping_position);
+                    } else {
+                        // Otherwise, fall back to the original logic
+                        // Also track the value with the key's name
+                        let value_position =
+                            if let Some(value_id) = position_tracker.find_node_id(value) {
+                                if let Some(span) = position_tracker.get_node_position(value_id) {
+                                    span.start
+                                } else {
+                                    key_position
+                                }
                             } else {
                                 key_position
-                            }
-                        } else {
-                            key_position
-                        };
+                            };
 
-                    // Track the value by the key's name
-                    position_tracker.track_node_by_path(key_str, value, value_position);
-
-                    // Special handling for block_sequence which is used in tests
-                    if key_str == "block_sequence" {
-                        // Ensure the position is properly stored for this specific node
-                        if let Some(node_id) =
-                            position_tracker.find_node_id_by_path_str("block_sequence")
-                        {
-                            // Make sure this node has a position
-                            position_tracker.set_node_position(node_id, value_position);
-                        }
+                        // Track the value by the key's name
+                        position_tracker.track_node_by_path(key_str, value, value_position);
                     }
                 }
             }
@@ -1102,6 +1120,24 @@ impl MarkedEventReceiver for PositionTrackedLoader {
             Event::SequenceEnd => {
                 eprintln!(
                     ">>> SequenceEnd received with span: ({},{}) to ({},{})",
+                    span.start.line(),
+                    span.start.col(),
+                    span.end.map_or(0, |m| m.line()),
+                    span.end.map_or(0, |m| m.col())
+                );
+            }
+            Event::MappingStart(_anchor_id, _tag, _style) => {
+                eprintln!(
+                    ">>> MappingStart received with span: ({},{}) to ({},{})",
+                    span.start.line(),
+                    span.start.col(),
+                    span.end.map_or(0, |m| m.line()),
+                    span.end.map_or(0, |m| m.col())
+                );
+            }
+            Event::MappingEnd => {
+                eprintln!(
+                    ">>> MappingEnd received with span: ({},{}) to ({},{})",
                     span.start.line(),
                     span.start.col(),
                     span.end.map_or(0, |m| m.line()),
@@ -1214,16 +1250,16 @@ impl crate::source_map::SourceMapSupport for PositionTrackedLoader {
         let docs = self.documents();
         let document = docs.get(document_index)?;
 
-        // Enhance with path tracking for automatic positioning
-        // This must be done before collecting position spans to ensure all nodes have positions
-        self.enhance_with_path_tracking(document);
-
         // Create a builder for the source map
         let builder = crate::source_map::SourceMapBuilder::new();
 
         // Traverse the document tree and build a mapping of nodes to position spans
         let mut node_spans = HashMap::new();
         self.collect_position_spans(document, &mut node_spans);
+
+        // Enhance with path tracking for automatic positioning
+        // This must be done before collecting position spans to ensure all nodes have positions
+        self.enhance_with_path_tracking(document);
 
         // Debug output before setting end positions
         eprintln!("*** Before fixing end positions ***");
