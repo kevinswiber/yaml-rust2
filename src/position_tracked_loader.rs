@@ -587,7 +587,7 @@ impl PositionTrackedLoader {
 
         // Ensure parent nodes have positions before processing children
         // Create a default position with line 1, column 1 for any nodes without real positions
-        let default_pos = crate::scanner::Marker::new(0, 1, 1);
+        let default_pos = crate::scanner::Marker::new(0, 1, 0);
         ensure_node_has_span(node_id, spans, default_pos);
 
         // Get the current span for this node for reference by children

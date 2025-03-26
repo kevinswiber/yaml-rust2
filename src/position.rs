@@ -1180,72 +1180,66 @@ impl PositionTracker {
                 // For mappings, if we have a start position on the stack,
                 // create a position span with both start and end positions
                 if let Some((id, start_mark)) = self.pop() {
-                    // If the item on top of the stack is a mapping (id 0 for flow or 2 for block),
-                    // return a span from its start position to the current position
-                    if id == NodeId::new(0) || id == NodeId::new(2) {
-                        // Create a complete span with start and end positions
-                        let complete_span = PositionSpan::with_end(start_mark, mark);
+                    let end_mark = self.calculate_end_position(id, mark);
+                    // Create a complete span with start and end positions
+                    let complete_span = PositionSpan::with_end(start_mark, end_mark);
 
-                        // Find any nodes that were created with just the start position
-                        // and update them with the complete span
-                        for (node_id, position) in self.node_positions.iter_mut() {
-                            // Check if this position has the same start mark and no end mark
-                            if position.start == start_mark && position.end.is_none() {
-                                // Update the position with the end mark
-                                position.end = Some(mark);
-                            }
-
-                            // Also update any nodes that might be referenced by path
-                            let path = format!("mapping_{}", node_id);
-                            if self.node_path_map.contains_key(&path) {
-                                // This is a mapping node that we need to update
-                                position.end = Some(mark);
-                            }
+                    // Find any nodes that were created with just the start position
+                    // and update them with the complete span
+                    for (node_id, position) in self.node_positions.iter_mut() {
+                        // Check if this position has the same start mark and no end mark
+                        if position.start == start_mark && position.end.is_none() {
+                            // Update the position with the end mark
+                            position.end = Some(mark);
                         }
 
-                        // Update end positions for all flow mappings
-                        // This ensures that all flow mappings have proper end positions regardless of their path
-                        for (_node_id, pos) in self.node_positions.iter_mut() {
-                            // If this node has no end position yet, update it with the current end position
-                            // This is a more aggressive approach that ensures all nodes get end positions
-                            if pos.end.is_none() {
-                                // For flow mappings, we want to ensure they all have end positions
-                                // Since we don't have direct type information, we'll set end positions
-                                // for all nodes that don't have them yet
+                        // Also update any nodes that might be referenced by path
+                        let path = format!("mapping_{}", node_id);
+                        if self.node_path_map.contains_key(&path) {
+                            // This is a mapping node that we need to update
+                            position.end = Some(mark);
+                        }
+                    }
+
+                    // Update end positions for all flow mappings
+                    // This ensures that all flow mappings have proper end positions regardless of their path
+                    for (_node_id, pos) in self.node_positions.iter_mut() {
+                        // If this node has no end position yet, update it with the current end position
+                        // This is a more aggressive approach that ensures all nodes get end positions
+                        if pos.end.is_none() {
+                            // For flow mappings, we want to ensure they all have end positions
+                            // Since we don't have direct type information, we'll set end positions
+                            // for all nodes that don't have them yet
+                            pos.end = Some(mark);
+                        }
+                    }
+
+                    // Special handling for root flow mapping
+                    // Ensure that any node with a path containing "root_flow" has an end position
+                    for (path, node_id) in self.node_path_map.iter() {
+                        if path.contains("root_flow") {
+                            if let Some(pos) = self.node_positions.get_mut(node_id) {
+                                // Always set the end position for root flow mappings
                                 pos.end = Some(mark);
                             }
                         }
-
-                        // Special handling for root flow mapping
-                        // Ensure that any node with a path containing "root_flow" has an end position
-                        for (path, node_id) in self.node_path_map.iter() {
-                            if path.contains("root_flow") {
-                                if let Some(pos) = self.node_positions.get_mut(node_id) {
-                                    // Always set the end position for root flow mappings
-                                    pos.end = Some(mark);
-                                }
-                            }
-                        }
-
-                        // Also update any nodes that are referenced by path
-                        let path_map_copy = self.node_path_map.clone();
-                        for (_, node_id) in path_map_copy {
-                            if let Some(pos) = self.node_positions.get_mut(&node_id) {
-                                // If this node has no end position, set it
-                                if pos.end.is_none() {
-                                    pos.end = Some(mark);
-                                }
-                            }
-                        }
-
-                        // Pop the path component as we're exiting the mapping
-                        self.pop_path();
-
-                        complete_span
-                    } else {
-                        // This shouldn't happen, but just in case
-                        span
                     }
+
+                    // Also update any nodes that are referenced by path
+                    let path_map_copy = self.node_path_map.clone();
+                    for (_, node_id) in path_map_copy {
+                        if let Some(pos) = self.node_positions.get_mut(&node_id) {
+                            // If this node has no end position, set it
+                            if pos.end.is_none() {
+                                pos.end = Some(mark);
+                            }
+                        }
+                    }
+
+                    // Pop the path component as we're exiting the mapping
+                    self.pop_path();
+
+                    complete_span
                 } else {
                     // Otherwise, just return the current position
                     span
@@ -1365,17 +1359,17 @@ impl PositionTracker {
                 if lines.len() == 1 {
                     // Single line scalar - end is start + length
                     span.end = Some(Marker::new(
-                        mark.line(),
-                        mark.col() + value.len(),
                         mark.index() + value.len(),
+                        mark.line(),
+                        mark.col() + value.len() - 1,
                     ));
                 } else {
                     // Multi-line scalar - need to compute based on last line
                     let last_line = lines.last().unwrap();
                     span.end = Some(Marker::new(
-                        mark.line() + lines.len() - 1,
-                        last_line.len(),
                         mark.index() + value.len(),
+                        mark.line() + lines.len() - 1,
+                        last_line.len() - 1,
                     ));
                 }
 
@@ -1502,8 +1496,7 @@ impl PositionTracker {
         let node_id = match self.node_path_map.get(path) {
             Some(&id) => id,
             None => {
-                let id = self.next_node_id;
-                self.next_node_id = NodeId::new(self.next_node_id.value() + 1);
+                let id = self.next_node_id();
                 self.node_path_map.insert(path.to_owned(), id);
                 id
             }
