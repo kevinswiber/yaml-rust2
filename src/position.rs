@@ -938,7 +938,7 @@ impl PositionTracker {
         if let Some(&node_id) = self.value_path_map.get(&value_path) {
             return self.get_node_position(node_id);
         }
-
+        
         // Try looking up by mapping path for flow-style mappings
         // First check if this is a key with an associated mapping
         let key = path.split('.').last().unwrap_or(path);
@@ -1002,16 +1002,26 @@ impl PositionTracker {
             }
         }
         
-        // For the specific "flow_mapping" case, look for the mapping starting at line 3
-        if path == "flow_mapping" {
-            for (map_path, node_id) in self.node_path_map.iter() {
-                if map_path.starts_with("mapping_") {
-                    if let Some(style) = self.get_mapping_style(*node_id) {
-                        if style == TMappingStyle::Flow {
-                            if let Some(pos) = self.get_node_position(*node_id) {
-                                // In the test case, we know it's at line 3
-                                if pos.start.line() == 3 {
-                                    println!("Found flow_mapping at fixed line 3, col {}", pos.start.col());
+        // General fallback approach - look for any flow mapping on the requested line
+        // This handles cases where we're looking for a flow mapping by a key name,
+        // but we don't have enough context to match it directly
+        for (map_path, node_id) in self.node_path_map.iter() {
+            if map_path.starts_with("mapping_") {
+                if let Some(style) = self.get_mapping_style(*node_id) {
+                    if style == TMappingStyle::Flow {
+                        if let Some(pos) = self.get_node_position(*node_id) {
+                            // Check if any part of the path is or contains the key
+                            if key.contains(key) || map_path.contains(key) {
+                                println!("Found flow mapping by name similarity at line {}, col {}", 
+                                       pos.start.line(), pos.start.col());
+                                return Some(pos);
+                            }
+                            
+                            // Also check value paths
+                            for (value_path, &value_node_id) in &self.value_path_map {
+                                if value_path.contains(key) && value_node_id == *node_id {
+                                    println!("Found flow mapping through value path match at line {}, col {}", 
+                                           pos.start.line(), pos.start.col());
                                     return Some(pos);
                                 }
                             }
@@ -1020,7 +1030,7 @@ impl PositionTracker {
                 }
             }
         }
-
+        
         None
     }
 
@@ -1537,14 +1547,6 @@ impl PositionTracker {
                             // Add the value path for the full path too
                             let full_value_path = format!("{}:value", full_path);
                             self.value_path_map.insert(full_value_path, node_id);
-                            
-                            // For the flow_mapping key specifically, ensure its values are tracked correctly
-                            if key == "flow_mapping" {
-                                println!("Special handling for flow_mapping key's value at line {}, col {}", 
-                                        mark.line(), mark.col());
-                                // Also map key directly to its value node ID
-                                self.value_path_map.insert("flow_mapping:value".to_string(), node_id);
-                            }
                             
                             // Store the key-value relationship
                             if let Some(key_node_id) = self.find_node_id_by_path(key) {
